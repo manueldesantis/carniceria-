@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1c24" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Instalar ClienteBD — Android / iPhone</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .install-page { max-width: 640px; margin: 0 auto; padding: 1.25rem; }
+    .install-page h1 { margin: 0 0 0.4rem; font-size: 1.6rem; }
+    .install-card {
+      margin: 1rem 0;
+      padding: 1rem 1.1rem;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(15, 28, 36, 0.55);
+    }
+    .install-card h2 { margin: 0 0 0.6rem; font-size: 1.15rem; }
+    .install-card ol { margin: 0; padding-left: 1.2rem; color: var(--ink); line-height: 1.55; }
+    .install-card li { margin: 0.35rem 0; }
+    .install-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1rem; }
+    #btn-install-pwa { display: none; }
+  </style>
+</head>
+<body>
+  <div class="install-page app-shell">
+    <p class="hint" style="margin-bottom:8px"><a href="/">← Volver a ClienteBD</a></p>
+    <h1>Instalar en el teléfono</h1>
+    <p class="hint">
+      ClienteBD se instala como <strong>aplicación web (PWA)</strong> en Android e iPhone.
+      No requiere Play Store ni App Store: queda el ícono en la pantalla de inicio y abre a pantalla completa.
+    </p>
+    <p class="hint">
+      Desde <strong>otra ciudad o país</strong> use la <strong>URL fija pública HTTPS</strong>
+      (Render/VPS), no la IP <code>192.168.x.x</code> del local.
+    </p>
+    <p class="hint" id="url-actual"></p>
+
+    <div class="install-actions">
+      <button id="btn-install-pwa" class="btn" type="button">Instalar aplicación</button>
+      <a class="btn secondary" href="/">Abrir ClienteBD</a>
+    </div>
+
+    <section class="install-card" id="card-android">
+      <h2>Android (Chrome / Edge)</h2>
+      <ol>
+        <li>Abra esta misma URL en <strong>Chrome</strong> (no en el navegador interno de WhatsApp).</li>
+        <li>Toque el menú <strong>⋮</strong> → <strong>Instalar aplicación</strong> o <strong>Agregar a la pantalla de inicio</strong>.</li>
+        <li>Confirme. Quedará el ícono <strong>ClienteBD</strong>.</li>
+        <li>Si usa URL pública HTTPS, puede estar en cualquier ciudad/país. Si usa IP 192.168.x.x, debe estar en la misma WiFi.</li>
+      </ol>
+    </section>
+
+    <section class="install-card" id="card-ios">
+      <h2>iPhone / iPad (Safari)</h2>
+      <ol>
+        <li>Abra esta URL en <strong>Safari</strong> (obligatorio en iOS).</li>
+        <li>Toque el botón <strong>Compartir</strong> (cuadrado con flecha).</li>
+        <li>Elija <strong>Agregar a pantalla de inicio</strong>.</li>
+        <li>Confirme el nombre <strong>ClienteBD</strong> y toque <strong>Agregar</strong>.</li>
+      </ol>
+    </section>
+
+    <section class="install-card">
+      <h2>Desde otra ciudad / país (URL fija)</h2>
+      <ol>
+        <li>Publique ClienteBD con HTTPS (guía en el servidor: <code>deploy/ACCESO-PUBLICO.md</code>).</li>
+        <li>Abra en el teléfono la URL fija, por ejemplo <code>https://su-app.onrender.com</code>.</li>
+        <li>Instale como PWA con los pasos de arriba.</li>
+        <li>MongoDB Atlas ya está en la nube: no necesita estar en el local.</li>
+      </ol>
+    </section>
+
+    <section class="install-card">
+      <h2>Solo en la WiFi del negocio</h2>
+      <ol>
+        <li>En la PC: ejecute <code>scripts\start-en-red.bat</code>.</li>
+        <li>Use la IP del archivo <code>dist\URLs-ClienteBD-RED.txt</code>.</li>
+      </ol>
+    </section>
+  </div>
+  <script>
+    (function () {
+      document.getElementById("url-actual").textContent =
+        "URL actual: " + location.origin + "/";
+      var ua = navigator.userAgent || "";
+      var isIOS = /iPhone|iPad|iPod/i.test(ua);
+      var isAndroid = /Android/i.test(ua);
+      if (isIOS) document.getElementById("card-android").style.opacity = "0.55";
+      if (isAndroid) document.getElementById("card-ios").style.opacity = "0.55";
+
+      var deferred = null;
+      var btn = document.getElementById("btn-install-pwa");
+      window.addEventListener("beforeinstallprompt", function (e) {
+        e.preventDefault();
+        deferred = e;
+        btn.style.display = "inline-flex";
+      });
+      btn.addEventListener("click", function () {
+        if (!deferred) return;
+        deferred.prompt();
+        deferred.userChoice.finally(function () { deferred = null; btn.style.display = "none"; });
+      });
+    })();
+  </script>
+</body>
+</html>

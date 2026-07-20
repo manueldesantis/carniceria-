@@ -1,0 +1,84 @@
+{
+  "name": "clientebd-julioabe",
+  "version": "1.0.0",
+  "author": "JULIOABE",
+  "description": "Cliente JULIOABE — consulta tablas sincronizadas en MongoDB Atlas",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "node api/server.js",
+    "dev": "node api/server.js",
+    "desktop": "electron .",
+    "pack": "electron-builder --win portable --x64",
+    "dist": "electron-builder --win nsis --x64",
+    "build:win64": "electron-builder --win nsis portable --x64",
+    "build:all": "scripts\\build-all-installers.bat"
+  },
+  "build": {
+    "appId": "com.julioabe.clientebd",
+    "productName": "ClienteBD JULIOABE",
+    "directories": {
+      "output": "dist"
+    },
+    "icon": "build/icon.png",
+    "files": [
+      "api/**/*",
+      "web/**/*",
+      "electron/**/*",
+      "package.json",
+      "!**/.env",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,readme.md}"
+    ],
+    "extraResources": [
+      {
+        "from": "build/env",
+        "to": "env",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "api/claveclie.key",
+        "to": "env/claveclie.key"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ClienteBD JULIOABE",
+      "installerLanguages": ["es_ES"],
+      "language": "3082",
+      "artifactName": "ClienteBD-JULIOABE-Windows-x64-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "ClienteBD-JULIOABE-Windows-x64-Portable-${version}.${ext}"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongodb": "^6.8.0"
+  },
+  "devDependencies": {
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3"
+  }
+}

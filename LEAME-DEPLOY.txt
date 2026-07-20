@@ -1,0 +1,10 @@
+ClienteBD JULIOABE — paquete para URL publica
+
+1. Suba este contenido a Render.com / VPS
+2. Configure MONGODB_URI y MONGODB_DB
+3. Clave: copie api\claveclie.key.example como api\claveclie.key
+   o use la variable APP_PASSWORD en el hosting
+4. Start: node api/server.js
+5. Lea deploy\ACCESO-PUBLICO.md
+
+NO incluya api\.env ni claveclie.key reales en repos publicos.

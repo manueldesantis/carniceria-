@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1c24" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="ClienteBD JULIOABE — consulta MongoDB sincronizado" />
+  <title>ClienteBD JULIOABE</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="view-login" class="login-wrap app-shell">
+    <div class="panel login-card">
+      <h1>ClienteBD</h1>
+      <p>Consulta en vivo las tablas JULIOABE en <strong>MongoDB</strong> (nube/VPS). No lee los DBF de la PC local.</p>
+      <div id="login-error" class="err hidden"></div>
+      <div class="field">
+        <label for="password">Clave de acceso</label>
+        <input id="password" type="password" autocomplete="current-password" placeholder="Clave de la aplicación" />
+      </div>
+      <button id="btn-login" class="btn" style="width:100%">Entrar</button>
+      <p style="margin-top:16px;font-size:.85rem;color:var(--muted)">
+        En el teléfono:
+        <a href="/instalar-movil.html">instalar aplicación (Android / iPhone)</a>
+      </p>
+    </div>
+  </div>
+
+  <div id="view-app" class="app-shell hidden">
+    <header class="topbar">
+      <h1 class="brand">ClienteBD <span id="db-label">JULIOABE / MongoDB</span></h1>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span id="health" style="font-size:.85rem;color:var(--muted)"><i class="status-dot off"></i>…</span>
+        <button id="btn-logout" class="btn ghost">Salir</button>
+      </div>
+    </header>
+
+    <nav class="tabs" id="main-tabs">
+      <button type="button" class="tab active" data-tab="consulta">Consulta</button>
+      <button type="button" class="tab" data-tab="reportes">Reportes (ventas + kilos)</button>
+    </nav>
+
+    <div id="tab-consulta">
+      <section class="panel">
+        <h2 style="margin:0 0 12px;font-size:1.2rem">Tablas sincronizadas</h2>
+        <div id="tables" class="grid-tables"></div>
+      </section>
+
+      <section class="panel" style="margin-top:14px">
+        <div class="toolbar">
+          <strong id="current-table" style="font-family:var(--font-display);font-size:1.25rem">Seleccione una tabla</strong>
+          <div class="search">
+            <input id="q" type="search" placeholder="Buscar (número, nombre, clave…)" />
+          </div>
+          <button id="btn-search" class="btn secondary">Buscar</button>
+          <button id="btn-refresh" class="btn ghost">Actualizar</button>
+        </div>
+        <div id="docs-error" class="err hidden"></div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead id="thead"></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="btn-prev" class="btn ghost" disabled>Anterior</button>
+          <span id="page-info">—</span>
+          <button id="btn-next" class="btn ghost" disabled>Siguiente</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="tab-reportes" class="hidden">
+      <section class="panel">
+        <h2 style="margin:0 0 8px;font-size:1.25rem">Reportes del período</h2>
+        <p class="hint">
+          Datos desde <strong>MongoDB</strong> (colecciones sincronizadas).
+          Use el almanaque para elegir fechas (limitado a facturas sincronizadas) y luego
+          <strong>Ventas</strong> o <strong>Cantidades</strong>.
+        </p>
+        <div class="toolbar dates">
+          <label>
+            Desde
+            <div class="date-field">
+              <input id="rep-desde" type="date" />
+              <button type="button" class="btn-calendar" data-date-for="rep-desde" title="Abrir almanaque" aria-label="Abrir almanaque desde">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path fill="currentColor" d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1.5A2.5 2.5 0 0 1 22 6.5v13A2.5 2.5 0 0 1 19.5 22h-15A2.5 2.5 0 0 1 2 19.5v-13A2.5 2.5 0 0 1 4.5 4H6V3a1 1 0 0 1 1-1zm12.5 8h-15v9.5c0 .28.22.5.5.5h15a.5.5 0 0 0 .5-.5V10zM4.5 6a.5.5 0 0 0-.5.5V8h16V6.5a.5.5 0 0 0-.5-.5h-15z"/>
+                </svg>
+              </button>
+            </div>
+          </label>
+          <label>
+            Hasta
+            <div class="date-field">
+              <input id="rep-hasta" type="date" />
+              <button type="button" class="btn-calendar" data-date-for="rep-hasta" title="Abrir almanaque" aria-label="Abrir almanaque hasta">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path fill="currentColor" d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1.5A2.5 2.5 0 0 1 22 6.5v13A2.5 2.5 0 0 1 19.5 22h-15A2.5 2.5 0 0 1 2 19.5v-13A2.5 2.5 0 0 1 4.5 4H6V3a1 1 0 0 1 1-1zm12.5 8h-15v9.5c0 .28.22.5.5.5h15a.5.5 0 0 0 .5-.5V10zM4.5 6a.5.5 0 0 0-.5.5V8h16V6.5a.5.5 0 0 0-.5-.5h-15z"/>
+                </svg>
+              </button>
+            </div>
+          </label>
+          <button id="btn-ventas" class="btn secondary">Ventas</button>
+          <button id="btn-cantidades" class="btn secondary">Cantidades</button>
+        </div>
+        <p id="reportes-rango" class="hint" style="margin-top:2px"></p>
+        <div id="reportes-error" class="err hidden"></div>
+        <p id="reportes-periodo" class="hint" style="margin-top:4px"></p>
+
+        <div id="panel-ventas" class="hidden">
+          <h3 class="subh">Totales de ventas</h3>
+          <div id="ventas-resumen" class="kpi-grid"></div>
+        </div>
+
+        <div id="panel-cantidades" class="hidden">
+          <h3 class="subh">Cantidades / kilos por rubro (ANAVENTA)</h3>
+          <div id="rubros-resumen" class="kpi-grid"></div>
+          <div class="table-wrap">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th>Código rubro</th>
+                  <th>Nombre</th>
+                  <th>Cantidad (kilos)</th>
+                  <th>Importe</th>
+                </tr>
+              </thead>
+              <tbody id="rubros-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="backdrop" class="drawer-backdrop"></div>
+  <aside id="drawer" class="drawer">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+      <h2>Detalle</h2>
+      <button id="btn-close-drawer" class="btn ghost">Cerrar</button>
+    </div>
+    <pre id="doc-json">{}</pre>
+  </aside>
+
+  <script src="/app.js?v=8"></script>
+</body>
+</html>

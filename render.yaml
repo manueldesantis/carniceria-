@@ -1,0 +1,21 @@
+# Despliegue en Render.com → URL fija HTTPS para el celular desde cualquier país
+# Pasos: https://dashboard.render.com → New → Blueprint → conectar este repo o carpeta
+services:
+  - type: web
+    name: clientebd-julioabe
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node api/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_DB
+        value: syncdbf
+      - key: MONGODB_URI
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
