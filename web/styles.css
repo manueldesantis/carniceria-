@@ -133,6 +133,50 @@ a { color: var(--accent2); }
   outline: 2px solid rgba(61, 184, 160, 0.45);
   border-color: transparent;
 }
+.password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.password-wrap input {
+  padding-right: 2.8rem;
+}
+.btn-eye {
+  position: absolute;
+  right: 0.35rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.btn-eye:hover {
+  color: var(--accent2);
+  background: rgba(61, 184, 160, 0.12);
+}
+.btn-eye:focus-visible {
+  outline: 2px solid rgba(61, 184, 160, 0.55);
+  outline-offset: 1px;
+}
+.btn-eye[aria-pressed="true"] {
+  color: var(--accent2);
+}
+.login-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.login-actions .btn {
+  flex: 1;
+}
 .err {
   color: #ffb4b4;
   background: rgba(226, 91, 91, 0.12);
@@ -351,7 +395,7 @@ table.data.planilla tr.fila-subtotal td {
   gap: 0;
   min-width: 13.5rem;
 }
-.toolbar.dates input[type="date"] {
+.toolbar.dates input.date-text {
   border-radius: 10px 0 0 10px;
   border: 1px solid var(--line);
   border-right: none;
@@ -361,13 +405,13 @@ table.data.planilla tr.fila-subtotal td {
   font: inherit;
   flex: 1;
   min-width: 0;
+  letter-spacing: 0.04em;
   color-scheme: dark;
 }
-.toolbar.dates input[type="date"]::-webkit-calendar-picker-indicator {
-  opacity: 0;
-  width: 0;
-  padding: 0;
-  margin: 0;
+.toolbar.dates input.date-text::placeholder {
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  opacity: 0.85;
 }
 .btn-calendar {
   display: inline-flex;

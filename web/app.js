@@ -34,11 +34,105 @@
   function showLogin() {
     $("view-login").classList.remove("hidden");
     $("view-app").classList.add("hidden");
+    focusPassword();
   }
 
   function showApp() {
     $("view-login").classList.add("hidden");
     $("view-app").classList.remove("hidden");
+  }
+
+  function focusPassword() {
+    const el = $("password");
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.focus();
+      try {
+        el.select();
+      } catch (_) {}
+    });
+  }
+
+  /** Cursor al primer dígito de fecha DD/MM/AAAA */
+  function focusDateFirstDigit(el) {
+    if (!el) return;
+    el.focus();
+    requestAnimationFrame(() => {
+      try {
+        el.setSelectionRange(0, 0);
+      } catch (_) {}
+    });
+  }
+
+  function setDateText(el, iso) {
+    if (!el) return;
+    el.value = iso ? toBritish(iso) : "";
+  }
+
+  function openDatePickerFor(textInput) {
+    if (!textInput) return;
+    const existing = toIso(textInput.value);
+    const picker = document.createElement("input");
+    picker.type = "date";
+    if (existing) picker.value = existing;
+    if (state.rangoFacturas.primera) picker.min = state.rangoFacturas.primera;
+    if (state.rangoFacturas.ultima) picker.max = state.rangoFacturas.ultima;
+    picker.style.cssText =
+      "position:fixed;left:0;top:0;opacity:0;pointer-events:none;width:0;height:0;border:0;padding:0;margin:0";
+    document.body.appendChild(picker);
+    let done = false;
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      picker.remove();
+    };
+    picker.addEventListener("change", () => {
+      if (picker.value) {
+        let iso = picker.value;
+        iso = clampIso(
+          iso,
+          state.rangoFacturas.primera,
+          state.rangoFacturas.ultima
+        );
+        setDateText(textInput, iso);
+        textInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      cleanup();
+      focusDateFirstDigit(textInput);
+    });
+    picker.addEventListener("cancel", cleanup);
+    picker.addEventListener("blur", () => setTimeout(cleanup, 400));
+    try {
+      if (typeof picker.showPicker === "function") {
+        picker.showPicker();
+        return;
+      }
+    } catch (_) {}
+    picker.click();
+  }
+
+  function closeSystem() {
+    const pass = $("password");
+    if (pass) pass.value = "";
+    if (state.token) {
+      api("/api/logout", { method: "POST", body: "{}" }).catch(() => {});
+      state.token = "";
+      localStorage.removeItem("clientebd_token");
+    }
+    // Intentar cerrar la ventana / pestaña
+    try {
+      window.close();
+    } catch (_) {}
+    // Si el navegador no permite cerrar, mostrar pantalla de cierre
+    setTimeout(() => {
+      document.body.innerHTML =
+        '<div class="login-wrap app-shell" style="display:grid;place-items:center;min-height:100vh">' +
+        '<div class="panel login-card" style="text-align:center">' +
+        "<h1>CONSULTAR VENTAS</h1>" +
+        '<p style="color:var(--muted);margin:12px 0 0">Sistema cerrado.</p>' +
+        '<p style="color:var(--muted);font-size:.9rem;margin:8px 0 0">Puede cerrar esta pestaña.</p>' +
+        "</div></div>";
+    }, 120);
   }
 
   function logout(callApi) {
@@ -58,6 +152,7 @@
       if (!String(password || "").trim()) {
         err.textContent = "NO SE PUEDE ACCEDER AL SITIO WEB";
         err.classList.remove("hidden");
+        focusPassword();
         return;
       }
       const data = await api("/api/login", {
@@ -72,6 +167,7 @@
     } catch (_e) {
       err.textContent = "NO SE PUEDE ACCEDER AL SITIO WEB";
       err.classList.remove("hidden");
+      focusPassword();
     }
   }
 
@@ -290,10 +386,6 @@
         comprobantes: data.comprobantes || 0,
       };
       if (!primera || !ultima) {
-        desdeEl.removeAttribute("min");
-        desdeEl.removeAttribute("max");
-        hastaEl.removeAttribute("min");
-        hastaEl.removeAttribute("max");
         if (hint) {
           hint.textContent =
             "No hay comprobantes en FACTURAS. Sincronice FACTURAS.DBF para poder consultar por fechas.";
@@ -301,11 +393,6 @@
         defaultDates(null, null);
         return;
       }
-      // Almanaque: permite cualquier día entre el primer y el último comprobante
-      desdeEl.min = primera;
-      desdeEl.max = ultima;
-      hastaEl.min = primera;
-      hastaEl.max = ultima;
       if (hint) {
         hint.innerHTML =
           "Puede ingresar <strong>cualquier rango</strong> entre el primer y el último comprobante de <strong>FACTURAS</strong>: " +
@@ -342,13 +429,14 @@
       if (primera && desdeIso < primera) desdeIso = primera;
     }
 
-    if (!desdeEl.value) desdeEl.value = clampIso(desdeIso, primera, ultima);
-    if (!hastaEl.value) hastaEl.value = clampIso(hastaIso, primera, ultima);
+    const curDesde = toIso(desdeEl.value);
+    const curHasta = toIso(hastaEl.value);
 
-    if (primera || ultima) {
-      desdeEl.value = clampIso(desdeEl.value, primera, ultima);
-      hastaEl.value = clampIso(hastaEl.value, primera, ultima);
-    }
+    if (!curDesde) setDateText(desdeEl, clampIso(desdeIso, primera, ultima));
+    else setDateText(desdeEl, clampIso(curDesde, primera, ultima));
+
+    if (!curHasta) setDateText(hastaEl, clampIso(hastaIso, primera, ultima));
+    else setDateText(hastaEl, clampIso(curHasta, primera, ultima));
   }
 
   function setTab(name) {
@@ -357,6 +445,9 @@
     });
     $("tab-consulta").classList.toggle("hidden", name !== "consulta");
     $("tab-reportes").classList.toggle("hidden", name !== "reportes");
+    if (name === "reportes") {
+      focusDateFirstDigit($("rep-desde"));
+    }
   }
 
   function renderKpis(el, items) {
@@ -377,8 +468,8 @@
     const hastaEl = $("rep-hasta");
     const desde = toIso(desdeEl.value);
     const hasta = toIso(hastaEl.value);
-    const primera = state.rangoFacturas.primera || desdeEl.min || "";
-    const ultima = state.rangoFacturas.ultima || hastaEl.max || "";
+    const primera = state.rangoFacturas.primera || "";
+    const ultima = state.rangoFacturas.ultima || "";
 
     if (!desde || !hasta) {
       throw new Error("Seleccione fechas Desde y Hasta en el almanaque");
@@ -793,7 +884,30 @@
   $("btn-login").onclick = login;
   $("password").addEventListener("keydown", (e) => {
     if (e.key === "Enter") login();
+    if (e.key === "Escape") closeSystem();
   });
+  const btnCancelar = $("btn-cancelar");
+  if (btnCancelar) btnCancelar.onclick = closeSystem;
+  const btnTogglePass = $("btn-toggle-password");
+  if (btnTogglePass) {
+    btnTogglePass.addEventListener("click", () => {
+      const input = $("password");
+      if (!input) return;
+      const showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      btnTogglePass.setAttribute("aria-pressed", showing ? "false" : "true");
+      btnTogglePass.setAttribute(
+        "aria-label",
+        showing ? "Mostrar clave" : "Ocultar clave"
+      );
+      btnTogglePass.title = showing ? "Mostrar clave" : "Ocultar clave";
+      const open = btnTogglePass.querySelector(".eye-open");
+      const closed = btnTogglePass.querySelector(".eye-closed");
+      if (open) open.classList.toggle("hidden", !showing);
+      if (closed) closed.classList.toggle("hidden", showing);
+      focusPassword();
+    });
+  }
   $("btn-logout").onclick = () => logout(true);
   $("btn-search").onclick = () => {
     state.q = $("q").value.trim();
@@ -836,14 +950,7 @@
       const id = btn.getAttribute("data-date-for");
       const input = id ? $(id) : null;
       if (!input) return;
-      input.focus();
-      if (typeof input.showPicker === "function") {
-        try {
-          input.showPicker();
-          return;
-        } catch (_) {}
-      }
-      input.click();
+      openDatePickerFor(input);
     });
   });
 
@@ -851,16 +958,43 @@
   ["rep-desde", "rep-hasta"].forEach((id) => {
     const el = $(id);
     if (!el) return;
+    el.addEventListener("focus", () => {
+      requestAnimationFrame(() => {
+        try {
+          el.setSelectionRange(0, 0);
+        } catch (_) {}
+      });
+    });
+    el.addEventListener("click", () => {
+      requestAnimationFrame(() => {
+        try {
+          el.setSelectionRange(0, 0);
+        } catch (_) {}
+      });
+    });
+    el.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (id === "rep-desde") {
+        focusDateFirstDigit($("rep-hasta"));
+      } else {
+        $("btn-ventas")?.focus();
+      }
+    });
     el.addEventListener("change", () => {
       const primera = state.rangoFacturas.primera;
       const ultima = state.rangoFacturas.ultima;
-      if (!primera || !ultima || !el.value) return;
-      el.value = clampIso(el.value, primera, ultima);
+      let iso = toIso(el.value);
+      if (!iso) return;
+      if (primera || ultima) iso = clampIso(iso, primera, ultima);
+      setDateText(el, iso);
       const desdeEl = $("rep-desde");
       const hastaEl = $("rep-hasta");
-      if (desdeEl.value && hastaEl.value && desdeEl.value > hastaEl.value) {
-        if (id === "rep-desde") hastaEl.value = desdeEl.value;
-        else desdeEl.value = hastaEl.value;
+      const dIso = toIso(desdeEl.value);
+      const hIso = toIso(hastaEl.value);
+      if (dIso && hIso && dIso > hIso) {
+        if (id === "rep-desde") setDateText(hastaEl, dIso);
+        else setDateText(desdeEl, hIso);
       }
     });
   });

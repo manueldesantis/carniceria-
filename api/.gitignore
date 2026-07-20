@@ -1,0 +1,4 @@
+.env
+claveclie.key
+node_modules/
+*.log
