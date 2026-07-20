@@ -1,7 +1,7 @@
 {
-  "name": "ClienteBD JULIOABE",
-  "short_name": "ClienteBD",
-  "description": "Consulta tablas sincronizadas JULIOABE en MongoDB",
+  "name": "CONSULTAR VENTAS",
+  "short_name": "Ventas",
+  "description": "Consultar ventas",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f1c24",

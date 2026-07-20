@@ -6,37 +6,32 @@
   <meta name="theme-color" content="#0f1c24" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="description" content="ClienteBD JULIOABE — consulta MongoDB sincronizado" />
-  <title>ClienteBD JULIOABE</title>
+  <meta name="description" content="Consultar Ventas" />
+  <title>CONSULTAR VENTAS</title>
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=15" />
+  <link rel="stylesheet" href="/styles.css?v=16" />
 </head>
 <body>
   <div id="view-login" class="login-wrap app-shell">
     <div class="panel login-card">
-      <h1>ClienteBD</h1>
-      <p>Consulta en vivo las tablas JULIOABE en <strong>MongoDB</strong> (nube/VPS). No lee los DBF de la PC local.</p>
+      <h1>CONSULTAR VENTAS</h1>
       <div id="login-error" class="err hidden"></div>
       <div class="field">
         <label for="password">Clave de acceso</label>
-        <input id="password" type="password" autocomplete="current-password" placeholder="Clave de la aplicación" />
+        <input id="password" type="password" autocomplete="current-password" placeholder="Ingrese la clave" />
       </div>
       <button id="btn-login" class="btn" style="width:100%">Entrar</button>
-      <p style="margin-top:16px;font-size:.85rem;color:var(--muted)">
-        En el teléfono:
-        <a href="/instalar-movil.html">instalar aplicación (Android / iPhone)</a>
-      </p>
     </div>
   </div>
 
   <div id="view-app" class="app-shell hidden">
     <header class="topbar">
-      <h1 class="brand">ClienteBD <span id="db-label">JULIOABE / MongoDB</span></h1>
+      <h1 class="brand">CONSULTAR VENTAS</h1>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span id="health" style="font-size:.85rem;color:var(--muted)"><i class="status-dot off"></i>…</span>
         <button id="btn-logout" class="btn ghost">Salir</button>
@@ -82,12 +77,8 @@
       <section class="panel">
         <h2 style="margin:0 0 8px;font-size:1.25rem">Reportes del período</h2>
         <p class="hint">
-          Datos desde <strong>MongoDB</strong> (FACTURAS / ANAVENTA sincronizadas).
-          Puede elegir <strong>cualquier rango de fechas</strong>, siempre que sea
-          <strong>mayor o igual</strong> a la fecha del primer comprobante de
-          <strong>FACTURAS</strong> y <strong>menor o igual</strong> a la del último.
-          Luego pulse <strong>Ventas</strong> o <strong>Cantidades</strong>.
-          Con el informe en pantalla puede <strong>Exportar CSV</strong>.
+          Elija el rango de fechas y pulse <strong>Ventas</strong> o <strong>Cantidades</strong>.
+          Puede <strong>Exportar CSV</strong> el informe en pantalla.
         </p>
         <div class="toolbar dates">
           <label>
@@ -187,6 +178,6 @@
     <pre id="doc-json">{}</pre>
   </aside>
 
-  <script src="/app.js?v=15"></script>
+  <script src="/app.js?v=16"></script>
 </body>
 </html>

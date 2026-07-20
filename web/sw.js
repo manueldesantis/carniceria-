@@ -1,4 +1,4 @@
-const CACHE = "clientebd-v11";
+const CACHE = "consultar-ventas-v16";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

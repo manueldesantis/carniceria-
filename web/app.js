@@ -55,6 +55,11 @@
     err.classList.add("hidden");
     try {
       const password = $("password").value;
+      if (!String(password || "").trim()) {
+        err.textContent = "NO SE PUEDE ACCEDER AL SITIO WEB";
+        err.classList.remove("hidden");
+        return;
+      }
       const data = await api("/api/login", {
         method: "POST",
         body: JSON.stringify({ password }),
@@ -64,31 +69,35 @@
       $("password").value = "";
       showApp();
       await boot();
-    } catch (e) {
-      err.textContent = e.message || "No se pudo iniciar sesion";
+    } catch (_e) {
+      err.textContent = "NO SE PUEDE ACCEDER AL SITIO WEB";
       err.classList.remove("hidden");
     }
   }
 
   async function ping() {
     try {
-      const h = await fetch("/api/health").then((r) => r.json());
+      const res = await fetch("/api/health");
+      if (!res.ok) throw new Error("offline");
+      const h = await res.json();
       const el = $("health");
+      if (!el) return;
       if (h.ok && h.storage === "mongodb") {
-        el.innerHTML =
-          '<i class="status-dot"></i>Conectado a MongoDB (' +
-          escapeHtml(h.db || "syncdbf") +
-          ")";
-        $("db-label").textContent = "JULIOABE / MongoDB Atlas";
+        el.innerHTML = '<i class="status-dot"></i>Conectado';
       } else if (h.ok) {
-        el.innerHTML = '<i class="status-dot off"></i>API sin MongoDB';
+        el.innerHTML = '<i class="status-dot off"></i>Sin base de datos';
       } else {
-        el.innerHTML =
-          '<i class="status-dot off"></i>' +
-          escapeHtml(h.mensaje || "Sin conexion MongoDB");
+        el.innerHTML = '<i class="status-dot off"></i>Desconectado';
       }
-    } catch {
-      $("health").innerHTML = '<i class="status-dot off"></i>API offline';
+    } catch (_e) {
+      const el = $("health");
+      if (el) el.innerHTML = '<i class="status-dot off"></i>Sin acceso';
+      const loginErr = $("login-error");
+      const viewLogin = $("view-login");
+      if (loginErr && viewLogin && !viewLogin.classList.contains("hidden")) {
+        loginErr.textContent = "NO SE PUEDE ACCEDER AL SITIO WEB";
+        loginErr.classList.remove("hidden");
+      }
     }
   }
 
@@ -520,7 +529,7 @@
     const data = informe.data || {};
     const rv = data.resumen || {};
     const lines = [];
-    lines.push(csvLine(["ClienteBD JULIOABE - Planilla de ventas"]));
+    lines.push(csvLine(["CONSULTAR VENTAS - Planilla de ventas"]));
     lines.push(
       csvLine([
         "Periodo",
@@ -584,7 +593,7 @@
     const data = informe.data || {};
     const rk = data.resumen || {};
     const lines = [];
-    lines.push(csvLine(["ClienteBD JULIOABE - Cantidades / kilos por rubro"]));
+    lines.push(csvLine(["CONSULTAR VENTAS - Cantidades / kilos por rubro"]));
     lines.push(
       csvLine([
         "Periodo",
@@ -637,10 +646,10 @@
       const stamp = fileStamp(informe.data.desde, informe.data.hasta);
       if (informe.tipo === "ventas") {
         lines = buildCsvVentas(informe);
-        filename = "ClienteBD_Ventas_" + stamp + ".csv";
+        filename = "ConsultarVentas_" + stamp + ".csv";
       } else if (informe.tipo === "cantidades") {
         lines = buildCsvCantidades(informe);
-        filename = "ClienteBD_Cantidades_" + stamp + ".csv";
+        filename = "ConsultarVentas_Cantidades_" + stamp + ".csv";
       } else {
         throw new Error("Tipo de informe desconocido");
       }
