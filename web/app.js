@@ -7,6 +7,10 @@
     limit: 25,
     q: "",
     columns: [],
+    /** Límites de FACTURAS: cualquier rango debe cumplir primera <= desde <= hasta <= ultima */
+    rangoFacturas: { primera: null, ultima: null, comprobantes: 0 },
+    /** Último informe mostrado (para exportar CSV) */
+    ultimoInforme: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -271,29 +275,42 @@
       const data = await api("/api/reports/rango-fechas");
       const primera = data.primera;
       const ultima = data.ultima;
+      state.rangoFacturas = {
+        primera: primera || null,
+        ultima: ultima || null,
+        comprobantes: data.comprobantes || 0,
+      };
       if (!primera || !ultima) {
+        desdeEl.removeAttribute("min");
+        desdeEl.removeAttribute("max");
+        hastaEl.removeAttribute("min");
+        hastaEl.removeAttribute("max");
         if (hint) {
-          hint.textContent = "No hay facturas sincronizadas para limitar el almanaque.";
+          hint.textContent =
+            "No hay comprobantes en FACTURAS. Sincronice FACTURAS.DBF para poder consultar por fechas.";
         }
         defaultDates(null, null);
         return;
       }
+      // Almanaque: permite cualquier día entre el primer y el último comprobante
       desdeEl.min = primera;
       desdeEl.max = ultima;
       hastaEl.min = primera;
       hastaEl.max = ultima;
       if (hint) {
         hint.innerHTML =
-          "Almanaque limitado a facturas sincronizadas: <strong>" +
+          "Puede ingresar <strong>cualquier rango</strong> entre el primer y el último comprobante de <strong>FACTURAS</strong>: " +
+          "<strong>" +
           escapeHtml(toBritish(primera)) +
           "</strong> → <strong>" +
           escapeHtml(toBritish(ultima)) +
           "</strong> (" +
           (data.comprobantes || 0) +
-          " comprobantes)";
+          " comprobantes). Fuera de ese intervalo no se admite.";
       }
       defaultDates(primera, ultima);
     } catch (e) {
+      state.rangoFacturas = { primera: null, ultima: null, comprobantes: 0 };
       if (hint) hint.textContent = "No se pudo cargar el rango de fechas: " + e.message;
       defaultDates(null, null);
     }
@@ -309,7 +326,7 @@
     let desdeIso = primera || hoy;
     if (ultima) {
       hastaIso = ultima;
-      // Últimos 30 días dentro del rango disponible
+      // Por defecto: últimos 30 días dentro del rango permitido de FACTURAS
       const d = new Date(ultima + "T12:00:00");
       d.setDate(d.getDate() - 30);
       desdeIso = d.toISOString().slice(0, 10);
@@ -319,7 +336,6 @@
     if (!desdeEl.value) desdeEl.value = clampIso(desdeIso, primera, ultima);
     if (!hastaEl.value) hastaEl.value = clampIso(hastaIso, primera, ultima);
 
-    // Si ya había valores fuera de rango, corregirlos
     if (primera || ultima) {
       desdeEl.value = clampIso(desdeEl.value, primera, ultima);
       hastaEl.value = clampIso(hastaEl.value, primera, ultima);
@@ -352,17 +368,42 @@
     const hastaEl = $("rep-hasta");
     const desde = toIso(desdeEl.value);
     const hasta = toIso(hastaEl.value);
+    const primera = state.rangoFacturas.primera || desdeEl.min || "";
+    const ultima = state.rangoFacturas.ultima || hastaEl.max || "";
+
     if (!desde || !hasta) {
       throw new Error("Seleccione fechas Desde y Hasta en el almanaque");
     }
     if (desde > hasta) {
       throw new Error("La fecha Desde no puede ser mayor que Hasta");
     }
-    if (desdeEl.min && desde < desdeEl.min) {
-      throw new Error("La fecha Desde es anterior a la primera factura sincronizada");
+    if (!primera || !ultima) {
+      throw new Error(
+        "No hay comprobantes en FACTURAS para limitar el rango. Sincronice FACTURAS.DBF."
+      );
     }
-    if (hastaEl.max && hasta > hastaEl.max) {
-      throw new Error("La fecha Hasta es posterior a la última factura sincronizada");
+    if (desde < primera) {
+      throw new Error(
+        "La fecha Desde debe ser mayor o igual a la del primer comprobante de FACTURAS (" +
+          toBritish(primera) +
+          ")"
+      );
+    }
+    if (hasta > ultima) {
+      throw new Error(
+        "La fecha Hasta debe ser menor o igual a la del último comprobante de FACTURAS (" +
+          toBritish(ultima) +
+          ")"
+      );
+    }
+    if (hasta < primera || desde > ultima) {
+      throw new Error(
+        "El rango debe estar entre " +
+          toBritish(primera) +
+          " y " +
+          toBritish(ultima) +
+          " (FACTURAS)"
+      );
     }
     return {
       desde,
@@ -388,6 +429,226 @@
   function showReportPanel(name) {
     $("panel-ventas").classList.toggle("hidden", name !== "ventas");
     $("panel-cantidades").classList.toggle("hidden", name !== "cantidades");
+    const btnCsv = $("btn-export-csv");
+    if (btnCsv) {
+      btnCsv.disabled = !state.ultimoInforme || state.ultimoInforme.tipo !== name;
+    }
+  }
+
+  function csvEscape(value) {
+    const s = value == null ? "" : String(value);
+    // Comillas si hay separador, saltos o espacios (para conservar justificación a la derecha)
+    if (/[;"\r\n]/.test(s) || /^\s|\s$/.test(s)) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function csvLine(cols) {
+    return cols.map(csvEscape).join(";");
+  }
+
+  /**
+   * Formato argentino: miles con punto, centavos con coma.
+   * Ej: 1234567.8 → "1.234.567,80"
+   */
+  function formatNumeroAr(value, decimales, blank) {
+    const decW = Math.max(0, Number(decimales) || 0);
+    if (blank) return "";
+    if (value == null || value === "") return "";
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "";
+    const neg = n < 0;
+    const abs = Math.abs(n);
+    const fixed = abs.toFixed(decW);
+    let ent;
+    let dec = "";
+    if (decW > 0) {
+      const parts = fixed.split(".");
+      ent = parts[0];
+      dec = parts[1] || "".padEnd(decW, "0");
+    } else {
+      ent = String(Math.round(abs));
+    }
+    const conMiles = ent.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    const body = decW > 0 ? conMiles + "," + dec : conMiles;
+    return (neg ? "-" : "") + body;
+  }
+
+  /**
+   * Importe CSV: 15 enteros + 2 decimales (formato AR), justificado a la derecha.
+   * Ancho fijo ~22 (15 dígitos + separadores de miles + coma + 2 decimales).
+   */
+  function formatImporteCsv(value, blank) {
+    const width = 22;
+    if (blank) return "".padStart(width, " ");
+    const s = formatNumeroAr(value, 2, false);
+    if (!s) return "".padStart(width, " ");
+    return s.padStart(width, " ");
+  }
+
+  function formatKilosCsv(value, blank) {
+    const width = 23;
+    if (blank) return "".padStart(width, " ");
+    const s = formatNumeroAr(value, 3, false);
+    if (!s) return "".padStart(width, " ");
+    return s.padStart(width, " ");
+  }
+
+  function downloadCsv(filename, lines) {
+    const bom = "\uFEFF";
+    const blob = new Blob([bom + lines.join("\r\n") + "\r\n"], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  function fileStamp(desde, hasta) {
+    const d = String(desde || "").replace(/-/g, "");
+    const h = String(hasta || "").replace(/-/g, "");
+    return d + "_" + h;
+  }
+
+  function buildCsvVentas(informe) {
+    const data = informe.data || {};
+    const rv = data.resumen || {};
+    const lines = [];
+    lines.push(csvLine(["ClienteBD JULIOABE - Planilla de ventas"]));
+    lines.push(
+      csvLine([
+        "Periodo",
+        toBritish(data.desde) + " a " + toBritish(data.hasta),
+      ])
+    );
+    lines.push(csvLine(["Origen", "MongoDB / FACTURAS"]));
+    lines.push(
+      csvLine([
+        "Formato importes",
+        "15 enteros + 2 decimales; miles con punto; centavos con coma; derecha",
+      ])
+    );
+    lines.push("");
+    lines.push(
+      csvLine([
+        "TIPOCOMP",
+        "Tipo de comprobante",
+        "Comprobantes",
+        "Neto gravado",
+        "IVA",
+        "Total",
+      ])
+    );
+    (rv.planillaVentas || []).forEach((row) => {
+      const tipocompTxt =
+        row.esTotal || row.esSubtotal || row.tipocomp == null
+          ? ""
+          : String(Math.trunc(Number(row.tipocomp) || 0)).padStart(2, "0");
+      const ocultar = !!row.ocultarNetoIva;
+      const marca =
+        row.esTotal || row.esSubtotal ? "** " + (row.concepto || "") : row.concepto || "";
+      lines.push(
+        csvLine([
+          tipocompTxt,
+          marca,
+          row.comprobantes || 0,
+          formatImporteCsv(row.totalNetoGravado, ocultar),
+          formatImporteCsv(row.totalIva, ocultar),
+          formatImporteCsv(row.totalVentas, false),
+        ])
+      );
+    });
+    lines.push("");
+    lines.push(csvLine(["Forma de pago", "Importe"]));
+    (rv.planillaPagos || []).forEach((row) => {
+      lines.push(
+        csvLine([row.concepto || "", formatImporteCsv(row.importe, false)])
+      );
+    });
+    lines.push(
+      csvLine([
+        "** Total formas de pago",
+        formatImporteCsv(rv.totalPagos, false),
+      ])
+    );
+    return lines;
+  }
+
+  function buildCsvCantidades(informe) {
+    const data = informe.data || {};
+    const rk = data.resumen || {};
+    const lines = [];
+    lines.push(csvLine(["ClienteBD JULIOABE - Cantidades / kilos por rubro"]));
+    lines.push(
+      csvLine([
+        "Periodo",
+        toBritish(data.desde) + " a " + toBritish(data.hasta),
+      ])
+    );
+    lines.push(csvLine(["Origen", "MongoDB / ANAVENTA"]));
+    lines.push(
+      csvLine([
+        "Formato importes",
+        "15 enteros + 2 decimales; miles con punto; centavos con coma; derecha",
+      ])
+    );
+    lines.push(
+      csvLine(["Total kilos / cantidades", formatKilosCsv(rk.kgs, false)])
+    );
+    lines.push(
+      csvLine(["Importe total", formatImporteCsv(rk.importe, false)])
+    );
+    lines.push(csvLine(["Rubros con venta", Number(rk.rubros) || 0]));
+    lines.push("");
+    lines.push(
+      csvLine(["Codigo rubro", "Nombre", "Cantidad (kilos)", "Importe"])
+    );
+    (data.rubros || []).forEach((row) => {
+      lines.push(
+        csvLine([
+          row.rubro,
+          row.nombre || "",
+          formatKilosCsv(row.kgs, false),
+          formatImporteCsv(row.importe, false),
+        ])
+      );
+    });
+    return lines;
+  }
+
+  function exportInformeCsv() {
+    const err = $("reportes-error");
+    err.classList.add("hidden");
+    const informe = state.ultimoInforme;
+    if (!informe) {
+      err.textContent = "Primero genere un informe (Ventas o Cantidades).";
+      err.classList.remove("hidden");
+      return;
+    }
+    try {
+      let lines;
+      let filename;
+      const stamp = fileStamp(informe.data.desde, informe.data.hasta);
+      if (informe.tipo === "ventas") {
+        lines = buildCsvVentas(informe);
+        filename = "ClienteBD_Ventas_" + stamp + ".csv";
+      } else if (informe.tipo === "cantidades") {
+        lines = buildCsvCantidades(informe);
+        filename = "ClienteBD_Cantidades_" + stamp + ".csv";
+      } else {
+        throw new Error("Tipo de informe desconocido");
+      }
+      downloadCsv(filename, lines);
+    } catch (e) {
+      err.textContent = e.message || String(e);
+      err.classList.remove("hidden");
+    }
   }
 
   async function loadVentas() {
@@ -396,17 +657,81 @@
     try {
       const { qs } = getReporteRange();
       const data = await api("/api/reports/ventas?" + qs);
+      state.ultimoInforme = { tipo: "ventas", data: data };
       setPeriodoHint(data);
       showReportPanel("ventas");
       const rv = data.resumen || {};
-      const el = $("ventas-resumen");
-      if (!el) throw new Error("No se encontró el panel de totales");
-      renderKpis(el, [
-        { label: "Total en Pesos", value: "$ " + money(rv.totalPesos) },
-        { label: "Total en IVA ventas", value: "$ " + money(rv.totalIva) },
-        { label: "Total neto gravado", value: "$ " + money(rv.totalNetoGravado) },
-      ]);
+      const bodyVentas = $("ventas-planilla-body");
+      const bodyPagos = $("ventas-pagos-body");
+      if (!bodyVentas || !bodyPagos) {
+        throw new Error("No se encontró la planilla de ventas");
+      }
+
+      const filas = rv.planillaVentas || [];
+      const fmtMoneyOrBlank = (row, value) => {
+        if (row.ocultarNetoIva) return "—";
+        if (value == null || value === "") return "—";
+        return "$ " + money(value);
+      };
+      const cellTxt = (row, text) =>
+        row.esTotal || row.esSubtotal
+          ? "<strong>" + text + "</strong>"
+          : text;
+      bodyVentas.innerHTML =
+        filas
+          .map((row) => {
+            let cls = "";
+            if (row.esTotal) cls = ' class="fila-total"';
+            else if (row.esSubtotal) cls = ' class="fila-subtotal"';
+            const tipocompTxt =
+              row.esTotal || row.esSubtotal || row.tipocomp == null
+                ? "—"
+                : String(Math.trunc(Number(row.tipocomp) || 0)).padStart(2, "0");
+            const concepto = escapeHtml(row.concepto || "");
+            const neto = escapeHtml(fmtMoneyOrBlank(row, row.totalNetoGravado));
+            const iva = escapeHtml(fmtMoneyOrBlank(row, row.totalIva));
+            const tot = escapeHtml("$ " + money(row.totalVentas));
+            return (
+              "<tr" +
+              cls +
+              '><td class="num">' +
+              cellTxt(row, escapeHtml(tipocompTxt)) +
+              "</td><td>" +
+              cellTxt(row, concepto) +
+              '</td><td class="num">' +
+              cellTxt(row, String(row.comprobantes || 0)) +
+              '</td><td class="num">' +
+              cellTxt(row, neto) +
+              '</td><td class="num">' +
+              cellTxt(row, iva) +
+              '</td><td class="num">' +
+              cellTxt(row, tot) +
+              "</td></tr>"
+            );
+          })
+          .join("") ||
+        '<tr><td colspan="6">Sin datos en el rango</td></tr>';
+
+      const pagos = rv.planillaPagos || [];
+      let htmlPagos = pagos
+        .map(
+          (row) =>
+            "<tr><td>" +
+            escapeHtml(row.concepto || "") +
+            '</td><td class="num">$ ' +
+            money(row.importe) +
+            "</td></tr>"
+        )
+        .join("");
+      htmlPagos +=
+        '<tr class="fila-total"><td><strong>Total formas de pago</strong></td><td class="num"><strong>$ ' +
+        money(rv.totalPagos) +
+        "</strong></td></tr>";
+      bodyPagos.innerHTML =
+        htmlPagos || '<tr><td colspan="2">Sin datos en el rango</td></tr>';
     } catch (e) {
+      state.ultimoInforme = null;
+      showReportPanel("");
       err.textContent = e.message;
       err.classList.remove("hidden");
     }
@@ -418,6 +743,7 @@
     try {
       const { qs } = getReporteRange();
       const data = await api("/api/reports/cantidades?" + qs);
+      state.ultimoInforme = { tipo: "cantidades", data: data };
       setPeriodoHint(data);
       showReportPanel("cantidades");
       const rk = data.resumen || {};
@@ -431,17 +757,19 @@
           .map(
             (row) =>
               "<tr><td>" +
-              row.rubro +
+              escapeHtml(String(row.rubro)) +
               "</td><td>" +
               escapeHtml(row.nombre) +
-              "</td><td>" +
+              '</td><td class="num">' +
               kilos(row.kgs) +
-              "</td><td>$ " +
+              '</td><td class="num">$ ' +
               money(row.importe) +
               "</td></tr>"
           )
           .join("") || '<tr><td colspan="4">Sin datos en el rango</td></tr>';
     } catch (e) {
+      state.ultimoInforme = null;
+      showReportPanel("");
       err.textContent = e.message;
       err.classList.remove("hidden");
     }
@@ -491,6 +819,7 @@
   });
   $("btn-ventas").onclick = loadVentas;
   $("btn-cantidades").onclick = loadCantidades;
+  $("btn-export-csv").onclick = exportInformeCsv;
 
   document.querySelectorAll(".btn-calendar").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -506,6 +835,24 @@
         } catch (_) {}
       }
       input.click();
+    });
+  });
+
+  // Mantener Desde/Hasta dentro de [primer comprobante, último comprobante] de FACTURAS
+  ["rep-desde", "rep-hasta"].forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      const primera = state.rangoFacturas.primera;
+      const ultima = state.rangoFacturas.ultima;
+      if (!primera || !ultima || !el.value) return;
+      el.value = clampIso(el.value, primera, ultima);
+      const desdeEl = $("rep-desde");
+      const hastaEl = $("rep-hasta");
+      if (desdeEl.value && hastaEl.value && desdeEl.value > hastaEl.value) {
+        if (id === "rep-desde") hastaEl.value = desdeEl.value;
+        else desdeEl.value = hastaEl.value;
+      }
     });
   });
 

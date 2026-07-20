@@ -220,6 +220,45 @@ table.data th {
 }
 table.data tr { cursor: pointer; }
 table.data tr:hover td { background: rgba(61, 184, 160, 0.08); }
+table.data.planilla tr { cursor: default; }
+table.data.planilla,
+table.data.grilla {
+  border-collapse: collapse;
+  width: 100%;
+  border: 1px solid #6a8494;
+}
+table.data.planilla th,
+table.data.planilla td,
+table.data.grilla th,
+table.data.grilla td {
+  border: 1px solid #6a8494;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+table.data.planilla th.num,
+table.data.planilla td.num,
+table.data.grilla th.num,
+table.data.grilla td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: "Consolas", "Courier New", monospace;
+}
+table.data.planilla tr.fila-subtotal td {
+  font-weight: 700;
+  background: rgba(61, 154, 106, 0.14);
+}
+table.data.planilla tr.fila-total td {
+  font-weight: 700;
+  background: rgba(214, 122, 58, 0.16);
+  border-top: 2px solid #d67a3a;
+  border-bottom: 2px solid #d67a3a;
+}
+table.data.planilla tr.fila-total td,
+table.data.planilla tr.fila-subtotal td {
+  font-weight: 700 !important;
+}
 
 .pager {
   display: flex;
@@ -357,8 +396,12 @@ table.data tr:hover td { background: rgba(61, 184, 160, 0.08); }
   gap: 16px;
   margin: 14px 0 20px;
 }
+.kpi-grid-pagos {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
 @media (max-width: 820px) {
-  .kpi-grid {
+  .kpi-grid,
+  .kpi-grid-pagos {
     grid-template-columns: 1fr;
   }
 }

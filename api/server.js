@@ -340,6 +340,12 @@ function toIsoDate(value) {
   return null;
 }
 
+function toBritishDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ""));
+  if (!m) return String(iso || "");
+  return m[3] + "/" + m[2] + "/" + m[1];
+}
+
 function parseDateRange(query) {
   const desde = toIsoDate(query.desde);
   const hasta = toIsoDate(query.hasta);
@@ -350,6 +356,104 @@ function parseDateRange(query) {
     return { error: "La fecha desde no puede ser mayor que hasta" };
   }
   return { desde, hasta };
+}
+
+/** Normaliza F_FEC (string ISO, DD/MM/YYYY o Date) a YYYY-MM-DD */
+function normalizeFecIso(value) {
+  if (value == null || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const s = String(value).trim();
+  return toIsoDate(s) || (/^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null);
+}
+
+/**
+ * Primera y última fecha de comprobantes en FACTURAS (sync_facturas / FACTURAS.DBF).
+ * Cualquier consulta por rango debe quedar dentro de [primera, ultima].
+ */
+async function getFacturasFechaBounds(database) {
+  const rows = await database
+    .collection("sync_facturas")
+    .aggregate([
+      {
+        $match: {
+          F_FEC: { $exists: true, $nin: [null, ""] },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          primera: { $min: "$F_FEC" },
+          ultima: { $max: "$F_FEC" },
+          comprobantes: { $sum: 1 },
+        },
+      },
+    ])
+    .toArray();
+  const r = rows[0];
+  if (!r) return null;
+  const primera = normalizeFecIso(r.primera);
+  const ultima = normalizeFecIso(r.ultima);
+  if (!primera || !ultima) return null;
+  return {
+    primera,
+    ultima,
+    comprobantes: r.comprobantes || 0,
+  };
+}
+
+/**
+ * Valida rango libre dentro de FACTURAS:
+ * primera <= desde <= hasta <= ultima
+ */
+async function parseDateRangeAgainstFacturas(database, query) {
+  const range = parseDateRange(query);
+  if (range.error) return range;
+
+  const bounds = await getFacturasFechaBounds(database);
+  if (!bounds) {
+    return {
+      error:
+        "No hay comprobantes en FACTURAS para consultar. Sincronice FACTURAS.DBF.",
+    };
+  }
+
+  const { primera, ultima } = bounds;
+  if (range.desde < primera) {
+    return {
+      error:
+        "La fecha Desde debe ser mayor o igual a la del primer comprobante de FACTURAS (" +
+        toBritishDate(primera) +
+        ")",
+    };
+  }
+  if (range.hasta > ultima) {
+    return {
+      error:
+        "La fecha Hasta debe ser menor o igual a la del último comprobante de FACTURAS (" +
+        toBritishDate(ultima) +
+        ")",
+    };
+  }
+  if (range.desde > ultima || range.hasta < primera) {
+    return {
+      error:
+        "El rango debe estar entre " +
+        toBritishDate(primera) +
+        " y " +
+        toBritishDate(ultima) +
+        " (FACTURAS)",
+    };
+  }
+
+  return {
+    desde: range.desde,
+    hasta: range.hasta,
+    primera,
+    ultima,
+    comprobantes: bounds.comprobantes,
+  };
 }
 
 function round2(n) {
@@ -364,41 +468,283 @@ const anaventaMatch = (desde, hasta) => ({
   $or: [{ ANULADA: { $ne: 1 } }, { ANULADA: { $exists: false } }],
 });
 
-/** Totales de ventas desde FACTURAS: pesos, IVA y neto gravado */
+/** Convierte TIPOCOMP (char/num) a número para agrupar */
+const tipocompNumExpr = {
+  $convert: {
+    input: {
+      $trim: {
+        input: { $toString: { $ifNull: ["$TIPOCOMP", "0"] } },
+      },
+    },
+    to: "double",
+    onError: 0,
+    onNull: 0,
+  },
+};
+
+/** Etiquetas AFIP habituales (código numérico TIPOCOMP) */
+const TIPOCOMP_LABELS = {
+  0: "Comprobante interno / sin fiscal",
+  1: "Factura A",
+  2: "Nota de débito A",
+  3: "Nota de crédito A",
+  4: "Recibo A",
+  5: "Nota de venta al contado A",
+  6: "Factura B",
+  7: "Nota de débito B",
+  8: "Nota de crédito B",
+  9: "Recibo B",
+  10: "Nota de venta al contado B",
+  11: "Factura C",
+  12: "Nota de débito C",
+  13: "Nota de crédito C",
+  15: "Recibo C",
+  51: "Factura M",
+  81: "Tique factura A",
+  82: "Tique factura B",
+  83: "Tique",
+  111: "Factura de crédito electrónica A",
+  112: "Nota de débito electrónica A",
+  113: "Nota de crédito electrónica A",
+};
+
+function tipocompLabel(n) {
+  const code = Number(n) || 0;
+  const name = TIPOCOMP_LABELS[code];
+  const codeTxt = String(Math.trunc(code)).padStart(2, "0");
+  if (name) {
+    return "TIPOCOMP " + codeTxt + " — " + name;
+  }
+  return "TIPOCOMP " + codeTxt;
+}
+
+const sumIvaExpr = {
+  $sum: {
+    $add: [{ $ifNull: ["$F_IVA1", 0] }, { $ifNull: ["$F_IVA2", 0] }],
+  },
+};
+
+const sumNetoGravadoExpr = {
+  $sum: {
+    $add: [
+      { $ifNull: ["$F_SUB1", 0] },
+      { $ifNull: ["$F_SUB2", 0] },
+      { $ifNull: ["$F_SUB3", 0] },
+    ],
+  },
+};
+
+/**
+ * Planilla de ventas FACTURAS:
+ * - Detalle TIPOCOMP > 0 (neto, IVA, total) + subtotal
+ * - Detalle TIPOCOMP = 0 (solo total; sin neto ni IVA) + subtotal
+ * - TOTAL GENERAL de ventas e impuestos
+ * - Formas de pago
+ */
 async function buildVentasResumen(database, desde, hasta) {
   const rows = await database
     .collection("sync_facturas")
     .aggregate([
       { $match: { F_FEC: { $gte: desde, $lte: hasta } } },
+      { $addFields: { _tipocompNum: tipocompNumExpr } },
       {
-        $group: {
-          _id: null,
-          totalPesos: { $sum: { $ifNull: ["$F_NET", 0] } },
-          totalIva: {
-            $sum: {
-              $add: [{ $ifNull: ["$F_IVA1", 0] }, { $ifNull: ["$F_IVA2", 0] }],
+        $facet: {
+          porTipo: [
+            {
+              $group: {
+                _id: "$_tipocompNum",
+                tipocompRaw: { $first: "$TIPOCOMP" },
+                totalVentas: { $sum: { $ifNull: ["$F_NET", 0] } },
+                totalIva: sumIvaExpr,
+                totalNetoGravado: sumNetoGravadoExpr,
+                comprobantes: { $sum: 1 },
+              },
             },
-          },
-          totalNetoGravado: {
-            $sum: {
-              $add: [
-                { $ifNull: ["$F_SUB1", 0] },
-                { $ifNull: ["$F_SUB2", 0] },
-                { $ifNull: ["$F_SUB3", 0] },
-              ],
+            { $sort: { _id: 1 } },
+          ],
+          formasPago: [
+            {
+              $group: {
+                _id: null,
+                efectivo: { $sum: { $ifNull: ["$EFECTIVO", 0] } },
+                tarjetac: { $sum: { $ifNull: ["$TARJETAC", 0] } },
+                tarjetad: { $sum: { $ifNull: ["$TARJETAD", 0] } },
+                transfere: { $sum: { $ifNull: ["$TRANSFERE", 0] } },
+                codigoqr: { $sum: { $ifNull: ["$CODIGOQR", 0] } },
+                ctacte: { $sum: { $ifNull: ["$CTACTE", 0] } },
+              },
             },
-          },
-          comprobantes: { $sum: 1 },
+          ],
         },
       },
     ])
     .toArray();
-  const r = rows[0] || {};
+
+  const f = rows[0] || {};
+  const porTipo = f.porTipo || [];
+
+  const mapDetalle = (row, ocultarNetoIva) => {
+    const tipocomp = Number(row._id) || 0;
+    return {
+      tipocomp,
+      tipocompRaw: row.tipocompRaw != null ? String(row.tipocompRaw) : "",
+      concepto: tipocompLabel(tipocomp),
+      totalVentas: round2(row.totalVentas),
+      totalNetoGravado: ocultarNetoIva ? null : round2(row.totalNetoGravado),
+      totalIva: ocultarNetoIva ? null : round2(row.totalIva),
+      comprobantes: row.comprobantes || 0,
+      ocultarNetoIva: !!ocultarNetoIva,
+      esDetalle: true,
+      esSubtotal: false,
+      esTotal: false,
+      grupo: tipocomp > 0 ? "tipocomp_gt0" : "tipocomp_eq0",
+    };
+  };
+
+  const sumKey = (list, key) =>
+    round2(list.reduce((s, r) => s + (Number(r[key]) || 0), 0));
+  const countRows = (list) =>
+    list.reduce((s, r) => s + (r.comprobantes || 0), 0);
+
+  const filasGt0 = porTipo
+    .filter((r) => Number(r._id) > 0)
+    .map((r) => mapDetalle(r, false));
+  const filasEq0 = porTipo
+    .filter((r) => Number(r._id) <= 0)
+    .map((r) => mapDetalle(r, true));
+
+  const subtotalGt0 = {
+    tipocomp: null,
+    tipocompRaw: "",
+    concepto: "SUBTOTAL TIPOCOMP > 0",
+    totalVentas: sumKey(filasGt0, "totalVentas"),
+    totalNetoGravado: sumKey(filasGt0, "totalNetoGravado"),
+    totalIva: sumKey(filasGt0, "totalIva"),
+    comprobantes: countRows(filasGt0),
+    ocultarNetoIva: false,
+    esDetalle: false,
+    esSubtotal: true,
+    esTotal: false,
+    grupo: "tipocomp_gt0",
+  };
+
+  const subtotalEq0 = {
+    tipocomp: null,
+    tipocompRaw: "",
+    concepto: "SUBTOTAL TIPOCOMP = 0",
+    totalVentas: sumKey(filasEq0, "totalVentas"),
+    totalNetoGravado: null,
+    totalIva: null,
+    comprobantes: countRows(filasEq0),
+    ocultarNetoIva: true,
+    esDetalle: false,
+    esSubtotal: true,
+    esTotal: false,
+    grupo: "tipocomp_eq0",
+  };
+
+  // Total general: ventas de ambos grupos + impuestos (neto/IVA solo de TIPOCOMP > 0)
+  const totalVentasGeneral = round2(
+    subtotalGt0.totalVentas + subtotalEq0.totalVentas
+  );
+  const totalNetoGeneral = subtotalGt0.totalNetoGravado;
+  const totalIvaGeneral = subtotalGt0.totalIva;
+  const totalCompGeneral = subtotalGt0.comprobantes + subtotalEq0.comprobantes;
+
+  const filaTotalGeneral = {
+    tipocomp: null,
+    tipocompRaw: "",
+    concepto: "TOTAL GENERAL DE VENTAS E IMPUESTOS",
+    totalVentas: totalVentasGeneral,
+    totalNetoGravado: totalNetoGeneral,
+    totalIva: totalIvaGeneral,
+    comprobantes: totalCompGeneral,
+    ocultarNetoIva: false,
+    esDetalle: false,
+    esSubtotal: false,
+    esTotal: true,
+    grupo: "total",
+  };
+
+  const planillaVentas = []
+    .concat(filasGt0)
+    .concat([subtotalGt0])
+    .concat(filasEq0)
+    .concat([subtotalEq0])
+    .concat([filaTotalGeneral]);
+
+  const pago = (f.formasPago || [])[0] || {};
+  const planillaPagos = [
+    { campo: "EFECTIVO", concepto: "Efectivo", importe: round2(pago.efectivo) },
+    {
+      campo: "TARJETAD",
+      concepto: "Tarjeta débito",
+      importe: round2(pago.tarjetad),
+    },
+    {
+      campo: "TARJETAC",
+      concepto: "Tarjeta crédito",
+      importe: round2(pago.tarjetac),
+    },
+    {
+      campo: "TRANSFERE",
+      concepto: "Transferencia",
+      importe: round2(pago.transfere),
+    },
+    {
+      campo: "CODIGOQR",
+      concepto: "Código QR",
+      importe: round2(pago.codigoqr),
+    },
+    {
+      campo: "CTACTE",
+      concepto: "Cuenta corriente",
+      importe: round2(pago.ctacte),
+    },
+  ];
+  const totalPagos = round2(
+    planillaPagos.reduce((s, row) => s + (row.importe || 0), 0)
+  );
+
   return {
-    totalPesos: round2(r.totalPesos),
-    totalIva: round2(r.totalIva),
-    totalNetoGravado: round2(r.totalNetoGravado),
-    comprobantes: r.comprobantes || 0,
+    planillaVentas,
+    planillaPagos,
+    totalPagos,
+    subtotalTipocompGt0: {
+      totalVentas: subtotalGt0.totalVentas,
+      totalNetoGravado: subtotalGt0.totalNetoGravado,
+      totalIva: subtotalGt0.totalIva,
+      comprobantes: subtotalGt0.comprobantes,
+    },
+    subtotalTipocompEq0: {
+      totalVentas: subtotalEq0.totalVentas,
+      totalNetoGravado: null,
+      totalIva: null,
+      comprobantes: subtotalEq0.comprobantes,
+    },
+    totalesGenerales: {
+      totalVentas: filaTotalGeneral.totalVentas,
+      totalNetoGravado: filaTotalGeneral.totalNetoGravado,
+      totalIva: filaTotalGeneral.totalIva,
+      comprobantes: filaTotalGeneral.comprobantes,
+    },
+    // Compatibilidad con consumidores previos
+    arca: {
+      totalPesos: subtotalGt0.totalVentas,
+      totalIva: subtotalGt0.totalIva,
+      totalNetoGravado: subtotalGt0.totalNetoGravado,
+      comprobantes: subtotalGt0.comprobantes,
+    },
+    noArca: {
+      totalPesos: subtotalEq0.totalVentas,
+      totalIva: null,
+      totalNetoGravado: null,
+      comprobantes: subtotalEq0.comprobantes,
+    },
+    totalPesos: filaTotalGeneral.totalVentas,
+    totalIva: filaTotalGeneral.totalIva,
+    totalNetoGravado: filaTotalGeneral.totalNetoGravado,
+    comprobantes: filaTotalGeneral.comprobantes,
   };
 }
 
@@ -460,34 +806,17 @@ async function buildCantidadesPorRubro(database, desde, hasta) {
   };
 }
 
-/** Primera y última fecha de facturas sincronizadas (para el almanaque) */
+/** Primera y última fecha de FACTURAS (para el almanaque / validación de rango) */
 app.get("/api/reports/rango-fechas", auth, async (_req, res) => {
   try {
     const database = await ensureDb();
-    const rows = await database
-      .collection("sync_facturas")
-      .aggregate([
-        {
-          $match: {
-            F_FEC: { $type: "string", $ne: "" },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            primera: { $min: "$F_FEC" },
-            ultima: { $max: "$F_FEC" },
-            comprobantes: { $sum: 1 },
-          },
-        },
-      ])
-      .toArray();
-    const r = rows[0];
-    if (!r || !r.primera || !r.ultima) {
+    const bounds = await getFacturasFechaBounds(database);
+    if (!bounds) {
       return res.json({
         ok: true,
         origen: "mongodb",
         database: MONGODB_DB,
+        tabla: "FACTURAS",
         primera: null,
         ultima: null,
         comprobantes: 0,
@@ -497,9 +826,12 @@ app.get("/api/reports/rango-fechas", auth, async (_req, res) => {
       ok: true,
       origen: "mongodb",
       database: MONGODB_DB,
-      primera: r.primera,
-      ultima: r.ultima,
-      comprobantes: r.comprobantes || 0,
+      tabla: "FACTURAS",
+      primera: bounds.primera,
+      ultima: bounds.ultima,
+      primeraTxt: toBritishDate(bounds.primera),
+      ultimaTxt: toBritishDate(bounds.ultima),
+      comprobantes: bounds.comprobantes,
     });
   } catch (err) {
     res.status(500).json({ ok: false, mensaje: String(err.message || err) });
@@ -509,12 +841,12 @@ app.get("/api/reports/rango-fechas", auth, async (_req, res) => {
 // Totales de ventas por rango (FACTURAS)
 app.get("/api/reports/ventas", auth, async (req, res) => {
   try {
-    const range = parseDateRange(req.query);
+    const database = await ensureDb();
+    const range = await parseDateRangeAgainstFacturas(database, req.query);
     if (range.error) {
       return res.status(400).json({ ok: false, mensaje: range.error });
     }
     const { desde, hasta } = range;
-    const database = await ensureDb();
     const resumen = await buildVentasResumen(database, desde, hasta);
     res.json({
       ok: true,
@@ -522,6 +854,8 @@ app.get("/api/reports/ventas", auth, async (req, res) => {
       database: MONGODB_DB,
       desde,
       hasta,
+      primera: range.primera,
+      ultima: range.ultima,
       resumen,
     });
   } catch (err) {
@@ -532,12 +866,12 @@ app.get("/api/reports/ventas", auth, async (req, res) => {
 // Cantidades/kilos por código de rubro (ANAVENTA.RUBRO)
 app.get("/api/reports/articulos-rubros", auth, async (req, res) => {
   try {
-    const range = parseDateRange(req.query);
+    const database = await ensureDb();
+    const range = await parseDateRangeAgainstFacturas(database, req.query);
     if (range.error) {
       return res.status(400).json({ ok: false, mensaje: range.error });
     }
     const { desde, hasta } = range;
-    const database = await ensureDb();
     const data = await buildCantidadesPorRubro(database, desde, hasta);
     res.json({
       ok: true,
@@ -545,6 +879,8 @@ app.get("/api/reports/articulos-rubros", auth, async (req, res) => {
       database: MONGODB_DB,
       desde,
       hasta,
+      primera: range.primera,
+      ultima: range.ultima,
       ...data,
     });
   } catch (err) {
@@ -555,12 +891,12 @@ app.get("/api/reports/articulos-rubros", auth, async (req, res) => {
 // Alias: cantidades/kilos por rubro desde ANAVENTA
 app.get("/api/reports/cantidades", auth, async (req, res) => {
   try {
-    const range = parseDateRange(req.query);
+    const database = await ensureDb();
+    const range = await parseDateRangeAgainstFacturas(database, req.query);
     if (range.error) {
       return res.status(400).json({ ok: false, mensaje: range.error });
     }
     const { desde, hasta } = range;
-    const database = await ensureDb();
     const data = await buildCantidadesPorRubro(database, desde, hasta);
     res.json({
       ok: true,
@@ -568,6 +904,8 @@ app.get("/api/reports/cantidades", auth, async (req, res) => {
       database: MONGODB_DB,
       desde,
       hasta,
+      primera: range.primera,
+      ultima: range.ultima,
       ...data,
     });
   } catch (err) {
@@ -578,12 +916,12 @@ app.get("/api/reports/cantidades", auth, async (req, res) => {
 /** Período: ventas + cantidades por rubro */
 app.get("/api/reports/periodo", auth, async (req, res) => {
   try {
-    const range = parseDateRange(req.query);
+    const database = await ensureDb();
+    const range = await parseDateRangeAgainstFacturas(database, req.query);
     if (range.error) {
       return res.status(400).json({ ok: false, mensaje: range.error });
     }
     const { desde, hasta } = range;
-    const database = await ensureDb();
     const [ventasResumen, cantidades] = await Promise.all([
       buildVentasResumen(database, desde, hasta),
       buildCantidadesPorRubro(database, desde, hasta),
@@ -594,6 +932,8 @@ app.get("/api/reports/periodo", auth, async (req, res) => {
       database: MONGODB_DB,
       desde,
       hasta,
+      primera: range.primera,
+      ultima: range.ultima,
       ventas: { resumen: ventasResumen },
       cantidades,
       kilosRubros: cantidades,
