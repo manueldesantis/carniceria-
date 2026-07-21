@@ -53,20 +53,94 @@
     });
   }
 
-  /** Cursor al primer dígito de fecha DD/MM/AAAA */
+  /** Edicion de fechas DD/MM/AAAA con sobrescritura (sin borrar a mano) */
+  const dateEditState = new Map(); // id -> { digits, fresh }
+
+  function beginDateOverwrite(el) {
+    if (!el || !el.id) return;
+    dateEditState.set(el.id, { digits: "", fresh: true });
+    try {
+      const len = String(el.value || "").length;
+      el.focus();
+      if (len > 0) el.setSelectionRange(0, len);
+      else el.setSelectionRange(0, 0);
+    } catch (_) {}
+  }
+
   function focusDateFirstDigit(el) {
-    if (!el) return;
-    el.focus();
-    requestAnimationFrame(() => {
-      try {
-        el.setSelectionRange(0, 0);
-      } catch (_) {}
-    });
+    beginDateOverwrite(el);
+  }
+
+  function selectDateForOverwrite(el) {
+    beginDateOverwrite(el);
+  }
+
+  function formatDigitsAsDate(digits) {
+    const d = String(digits || "").slice(0, 8);
+    const dd = d.slice(0, 2);
+    const mm = d.slice(2, 4);
+    const yyyy = d.slice(4, 8);
+    if (d.length <= 2) return dd;
+    if (d.length <= 4) return dd + "/" + mm;
+    return dd + "/" + mm + "/" + yyyy;
+  }
+
+  function caretPosForDigits(n) {
+    let pos = n;
+    if (n > 2) pos += 1;
+    if (n > 4) pos += 1;
+    return pos;
+  }
+
+  /** Digitos: si el campo esta en modo fresh (recien enfocado), arranca de cero */
+  function onDateDigitInput(el, e) {
+    if (!el || !el.id) return false;
+    if (!/^\d$/.test(e.key)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    let st = dateEditState.get(el.id) || { digits: "", fresh: true };
+    if (st.fresh) {
+      st.digits = "";
+      st.fresh = false;
+    }
+    if (st.digits.length >= 8) {
+      st.digits = "";
+    }
+    st.digits = (st.digits + e.key).slice(0, 8);
+    dateEditState.set(el.id, st);
+    el.value = formatDigitsAsDate(st.digits);
+    const pos = caretPosForDigits(st.digits.length);
+    try {
+      el.setSelectionRange(pos, pos);
+    } catch (_) {}
+    return true;
+  }
+
+  function onDateBackspace(el, e) {
+    if (!el || !el.id || e.key !== "Backspace") return false;
+    e.preventDefault();
+    let st = dateEditState.get(el.id) || { digits: "", fresh: false };
+    if (st.fresh) {
+      st.digits = "";
+      st.fresh = false;
+      el.value = "";
+      dateEditState.set(el.id, st);
+      return true;
+    }
+    st.digits = st.digits.slice(0, -1);
+    dateEditState.set(el.id, st);
+    el.value = formatDigitsAsDate(st.digits);
+    const pos = caretPosForDigits(st.digits.length);
+    try {
+      el.setSelectionRange(pos, pos);
+    } catch (_) {}
+    return true;
   }
 
   function setDateText(el, iso) {
     if (!el) return;
     el.value = iso ? toBritish(iso) : "";
+    if (el.id) dateEditState.set(el.id, { digits: "", fresh: true });
   }
 
   function openDatePickerFor(textInput) {
@@ -459,7 +533,7 @@
       if (h && !h.value && state.rangoFacturas.ultima) {
         setDateText(h, state.rangoFacturas.ultima);
       }
-      focusDateFirstDigit(d || $("btn-espacio"));
+      loadEspacio();
     }
   }
 
@@ -467,14 +541,17 @@
     const tables = [];
     if ($("del-facturas") && $("del-facturas").checked) tables.push("sync_facturas");
     if ($("del-anaventa") && $("del-anaventa").checked) tables.push("sync_anaventa");
+    if ($("del-ctactecc") && $("del-ctactecc").checked) tables.push("sync_ctactecc");
     return tables;
   }
 
   async function loadEspacio() {
     const err = $("espacio-error");
     const resumen = $("espacio-resumen");
+    const kpis = $("espacio-kpis");
     const body = $("espacio-body");
     if (err) err.classList.add("hidden");
+    if (body) body.innerHTML = '<tr><td colspan="5">Consultando espacio…</td></tr>';
     try {
       const data = await api("/api/storage/espacio");
       const byId = {};
@@ -491,7 +568,7 @@
           "</td><td>" +
           escapeHtml(d.dbf || "—") +
           '</td><td class="num">' +
-          escapeHtml(d.exists ? d.sizeHuman : "—") +
+          escapeHtml(d.exists ? d.sizeHuman : "no en disco") +
           '</td><td class="num">' +
           escapeHtml(m.exists ? String(m.count) : "—") +
           '</td><td class="num">' +
@@ -499,35 +576,108 @@
           "</td></tr>"
         );
       });
-      body.innerHTML =
-        rows.join("") || '<tr><td colspan="5">Sin tablas</td></tr>';
+      const dbfTotal = (data.dbf && data.dbf.totalHuman) || "—";
+      const mongoTotal =
+        (data.mongodb && (data.mongodb.usedHuman || data.mongodb.totalStorageHuman)) ||
+        "—";
+      const mongoFree = (data.mongodb && data.mongodb.freeHuman) || "—";
+      const mongoQuota = (data.mongodb && data.mongodb.quotaHuman) || "—";
+      const free = (data.disk && data.disk.freeHuman) || "—";
+      rows.push(
+        '<tr class="fila-total"><td colspan="2"><strong>TOTAL</strong></td>' +
+          '<td class="num"><strong>' +
+          escapeHtml(dbfTotal) +
+          "</strong></td>" +
+          '<td class="num"><strong>' +
+          escapeHtml(
+            data.mongodb ? String(data.mongodb.totalDocs || 0) + " regs" : "—"
+          ) +
+          "</strong></td>" +
+          '<td class="num"><strong>' +
+          escapeHtml(mongoTotal) +
+          "</strong></td></tr>"
+      );
+      rows.push(
+        '<tr class="fila-total"><td colspan="4"><strong>Espacio disponible en MongoDB</strong> (cupo ' +
+          escapeHtml(mongoQuota) +
+          (data.mongodb && data.mongodb.usedPct != null
+            ? ", usado " + data.mongodb.usedPct + "%"
+            : "") +
+          ')</td><td class="num"><strong>' +
+          escapeHtml(mongoFree) +
+          "</strong></td></tr>"
+      );
+      if (body) {
+        body.innerHTML =
+          rows.join("") || '<tr><td colspan="5">Sin tablas</td></tr>';
+      }
+
+      if (kpis) {
+        renderKpis(kpis, [
+          {
+            label: "Espacio disponible (disco PC)",
+            value: free,
+          },
+          {
+            label: "Ocupado por DBF sincronizados",
+            value: dbfTotal,
+          },
+          {
+            label: "Ocupado en MongoDB",
+            value: mongoTotal,
+          },
+          {
+            label: "Disponible en MongoDB",
+            value: mongoFree,
+          },
+          {
+            label: "Cupo MongoDB",
+            value: mongoQuota,
+          },
+          {
+            label: "Registros en MongoDB",
+            value: String((data.mongodb && data.mongodb.totalDocs) || 0),
+          },
+        ]);
+      }
 
       const parts = [];
+      if (data.pathDbf) {
+        parts.push("Carpeta DBF: <code>" + escapeHtml(data.pathDbf) + "</code>");
+      }
       if (data.disk) {
         parts.push(
-          "Disco libre: <strong>" +
+          "Disco PC: libre <strong>" +
             escapeHtml(data.disk.freeHuman) +
-            "</strong> de " +
+            "</strong> / total " +
             escapeHtml(data.disk.totalHuman) +
-            (data.disk.usedPct != null ? " (usado " + data.disk.usedPct + "%)" : "")
+            (data.disk.usedPct != null
+              ? " (usado " + data.disk.usedPct + "%)"
+              : "")
         );
-      }
-      if (data.dbf) {
+      } else if (!data.pathExists) {
         parts.push(
-          "DBF total: <strong>" + escapeHtml(data.dbf.totalHuman) + "</strong>"
+          "Sin acceso a disco local (p.ej. Render). Se muestra el espacio en MongoDB."
         );
-        if (data.dbf.nota) parts.push(escapeHtml(data.dbf.nota));
       }
       if (data.mongodb) {
         parts.push(
-          "MongoDB: <strong>" +
-            escapeHtml(String(data.mongodb.totalDocs)) +
-            "</strong> regs / " +
-            escapeHtml(data.mongodb.totalStorageHuman)
+          "MongoDB: disponible <strong>" +
+            escapeHtml(data.mongodb.freeHuman || "—") +
+            "</strong> de " +
+            escapeHtml(data.mongodb.quotaHuman || "—") +
+            (data.mongodb.usedPct != null
+              ? " (usado " + data.mongodb.usedPct + "%)"
+              : "")
         );
       }
+      if (data.dbf && data.dbf.nota) parts.push(escapeHtml(data.dbf.nota));
       if (resumen) resumen.innerHTML = parts.join(" · ");
     } catch (e) {
+      if (body) {
+        body.innerHTML =
+          '<tr><td colspan="5">Error al consultar espacio</td></tr>';
+      }
       if (err) {
         err.textContent = e.message;
         err.classList.remove("hidden");
@@ -543,7 +693,7 @@
     if (ok) ok.textContent = "";
     try {
       const tables = selectedDeleteTables();
-      if (!tables.length) throw new Error("Seleccione al menos FACTURAS o ANAVENTA");
+      if (!tables.length) throw new Error("Seleccione al menos FACTURAS, ANAVENTA o CTACTECC");
       const data = await api("/api/admin/preview-borrar", {
         method: "POST",
         body: JSON.stringify({
@@ -582,7 +732,7 @@
     if (ok) ok.textContent = "";
     try {
       const tables = selectedDeleteTables();
-      if (!tables.length) throw new Error("Seleccione al menos FACTURAS o ANAVENTA");
+      if (!tables.length) throw new Error("Seleccione al menos FACTURAS, ANAVENTA o CTACTECC");
       const data = await api("/api/admin/borrar-rango", {
         method: "POST",
         body: JSON.stringify({
@@ -1120,36 +1270,32 @@
     });
   });
 
-  // Mantener Desde/Hasta dentro de [primer comprobante, último comprobante] de FACTURAS
+  // Fechas: sobrescritura por digitos (Reportes + Borrado)
   ["rep-desde", "rep-hasta", "del-desde", "del-hasta"].forEach((id) => {
     const el = $(id);
     if (!el) return;
-    el.addEventListener("focus", () => {
-      requestAnimationFrame(() => {
-        try {
-          el.setSelectionRange(0, 0);
-        } catch (_) {}
-      });
-    });
-    el.addEventListener("click", () => {
-      requestAnimationFrame(() => {
-        try {
-          el.setSelectionRange(0, 0);
-        } catch (_) {}
-      });
+    el.addEventListener("focus", () => beginDateOverwrite(el));
+    el.addEventListener("mouseup", (e) => {
+      // Evita que el click deje el cursor en medio y anule la sobrescritura
+      e.preventDefault();
+      beginDateOverwrite(el);
     });
     el.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      if (id === "rep-desde") {
-        focusDateFirstDigit($("rep-hasta"));
-      } else if (id === "rep-hasta") {
-        $("btn-ventas")?.focus();
-      } else if (id === "del-desde") {
-        focusDateFirstDigit($("del-hasta"));
-      } else if (id === "del-hasta") {
-        $("btn-preview-borrar")?.focus();
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (id === "rep-desde") {
+          focusDateFirstDigit($("rep-hasta"));
+        } else if (id === "rep-hasta") {
+          $("btn-ventas")?.focus();
+        } else if (id === "del-desde") {
+          focusDateFirstDigit($("del-hasta"));
+        } else if (id === "del-hasta") {
+          $("btn-preview-borrar")?.focus();
+        }
+        return;
       }
+      if (onDateBackspace(el, e)) return;
+      if (onDateDigitInput(el, e)) return;
     });
     el.addEventListener("change", () => {
       if (id === "del-desde" || id === "del-hasta") {

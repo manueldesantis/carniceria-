@@ -1,4 +1,4 @@
-const CACHE = "consultar-ventas-v16";
+const CACHE = "consultar-ventas-v23";
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

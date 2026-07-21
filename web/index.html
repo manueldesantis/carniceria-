@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20" />
+  <link rel="stylesheet" href="/styles.css?v=23" />
 </head>
 <body>
   <div id="view-login" class="login-wrap app-shell">
@@ -185,10 +185,12 @@
       <section class="panel">
         <h2 style="margin:0 0 8px;font-size:1.25rem">Espacio de tablas sincronizadas</h2>
         <p class="hint">
-          Tamaño de los DBF en disco (si esta PC tiene <code>C:\JULIOABE</code>) y espacio usado en MongoDB.
+          Espacio disponible en disco, tamaño de cada DBF sincronizado y ocupación en MongoDB.
+          Se carga al abrir esta pestaña.
         </p>
+        <div id="espacio-kpis" class="kpi-grid" style="margin-bottom:12px"></div>
         <div class="toolbar" style="margin-bottom:10px">
-          <button id="btn-espacio" class="btn secondary" type="button">Consultar espacio</button>
+          <button id="btn-espacio" class="btn secondary" type="button">Actualizar espacio</button>
         </div>
         <div id="espacio-error" class="err hidden"></div>
         <p id="espacio-resumen" class="hint" style="margin-top:0"></p>
@@ -198,13 +200,13 @@
               <tr>
                 <th>Tabla</th>
                 <th>DBF</th>
-                <th class="num">Tamaño DBF</th>
+                <th class="num">Ocupado DBF</th>
                 <th class="num">Regs. MongoDB</th>
-                <th class="num">Espacio MongoDB</th>
+                <th class="num">Ocupado MongoDB</th>
               </tr>
             </thead>
             <tbody id="espacio-body">
-              <tr><td colspan="5">Pulse «Consultar espacio»</td></tr>
+              <tr><td colspan="5">Cargando espacio…</td></tr>
             </tbody>
           </table>
         </div>
@@ -213,8 +215,8 @@
       <section class="panel" style="margin-top:14px">
         <h2 style="margin:0 0 8px;font-size:1.25rem">Borrar registros en MongoDB por fechas</h2>
         <p class="hint">
-          Elimina de la nube (MongoDB) los registros de <strong>FACTURAS</strong> y/o <strong>ANAVENTA</strong>
-          dentro del rango. No modifica los DBF locales. Acción irreversible.
+          Elimina de la nube (MongoDB) los registros de <strong>FACTURAS</strong>, <strong>ANAVENTA</strong>
+          y/o <strong>CTACTECC</strong> dentro del rango. No modifica los DBF locales. Acción irreversible.
         </p>
         <div class="toolbar dates">
           <label>
@@ -243,6 +245,7 @@
         <div class="del-tables" style="display:flex;gap:14px;flex-wrap:wrap;margin:10px 0">
           <label class="chk"><input type="checkbox" id="del-facturas" checked /> FACTURAS</label>
           <label class="chk"><input type="checkbox" id="del-anaventa" checked /> ANAVENTA</label>
+          <label class="chk"><input type="checkbox" id="del-ctactecc" checked /> CTACTECC</label>
         </div>
         <div class="toolbar" style="margin-bottom:8px">
           <button id="btn-preview-borrar" class="btn secondary" type="button">Ver cuántos se borrarían</button>
@@ -272,6 +275,6 @@
     <pre id="doc-json">{}</pre>
   </aside>
 
-  <script src="/app.js?v=20"></script>
+  <script src="/app.js?v=23"></script>
 </body>
 </html>

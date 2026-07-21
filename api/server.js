@@ -947,6 +947,7 @@ app.get("/api/reports/periodo", auth, async (req, res) => {
 const DATE_TABLES = [
   { id: "sync_facturas", label: "FACTURAS", dbf: "FACTURAS.DBF", dateField: "F_FEC" },
   { id: "sync_anaventa", label: "ANAVENTA", dbf: "ANAVENTA.DBF", dateField: "FECHA" },
+  { id: "sync_ctactecc", label: "CTACTECC", dbf: "CTACTECC.DBF", dateField: "FECHA" },
 ];
 
 function resolvePathDbf() {
@@ -975,12 +976,35 @@ function getDiskFree(dirPath) {
       const bsize = Number(st.bsize || st.frsize || 0);
       const bavail = Number(st.bavail != null ? st.bavail : st.bfree || 0);
       const blocks = Number(st.blocks || 0);
-      return {
-        freeBytes: bsize * bavail,
-        totalBytes: bsize * blocks,
-      };
+      if (bsize > 0 && blocks > 0) {
+        return {
+          freeBytes: bsize * bavail,
+          totalBytes: bsize * blocks,
+        };
+      }
     }
   } catch (_) {}
+  // Fallback Windows: wmic / PowerShell
+  if (process.platform === "win32") {
+    try {
+      const { execSync } = require("child_process");
+      const drive = String(dirPath).slice(0, 2).toUpperCase(); // C:
+      const ps =
+        "$d=Get-PSDrive -Name '" +
+        drive.replace(":", "") +
+        "'; [pscustomobject]@{Free=$d.Free;Used=$d.Used}";
+      const out = execSync(
+        'powershell -NoProfile -Command "' + ps + ' | ConvertTo-Json"',
+        { encoding: "utf8", timeout: 8000, windowsHide: true }
+      );
+      const j = JSON.parse(out);
+      const free = Number(j.Free || 0);
+      const used = Number(j.Used || 0);
+      if (free > 0 || used > 0) {
+        return { freeBytes: free, totalBytes: free + used };
+      }
+    } catch (_) {}
+  }
   return null;
 }
 
@@ -1029,6 +1053,8 @@ app.get("/api/storage/espacio", auth, async (_req, res) => {
     const mongoTables = [];
     let mongoTotalBytes = 0;
     let mongoTotalDocs = 0;
+    let mongoDataBytes = 0;
+    let mongoIndexBytes = 0;
     for (const t of TABLES) {
       let count = 0;
       let storageSize = 0;
@@ -1043,6 +1069,8 @@ app.get("/api/storage/espacio", auth, async (_req, res) => {
           storageSize = Number(st.storageSize || 0);
           size = Number(st.size || 0);
           mongoTotalBytes += storageSize;
+          mongoDataBytes += size;
+          mongoIndexBytes += Number(st.totalIndexSize || st.indexSize || 0);
           mongoTotalDocs += count;
         }
       } catch (_) {
@@ -1059,6 +1087,52 @@ app.get("/api/storage/espacio", auth, async (_req, res) => {
         dataHuman: formatBytes(size),
       });
     }
+
+    // Espacio disponible MongoDB: dbStats (fs*) o cupo configurado (Atlas)
+    let mongoQuotaBytes = 0;
+    let mongoUsedBytes = mongoTotalBytes;
+    let mongoFreeSource = "colecciones";
+    try {
+      const dbSt = await database.command({ dbStats: 1, scale: 1 });
+      const fsUsed = Number(dbSt.fsUsedSize || 0);
+      const fsTotal = Number(dbSt.fsTotalSize || 0);
+      const storageSize = Number(dbSt.storageSize || 0);
+      const indexSize = Number(dbSt.indexSize || 0);
+      const dataSize = Number(dbSt.dataSize || 0);
+      if (fsUsed > 0) {
+        mongoUsedBytes = fsUsed;
+        mongoFreeSource = "dbStats.fsUsedSize";
+      } else if (storageSize + indexSize > 0) {
+        mongoUsedBytes = storageSize + indexSize;
+        mongoFreeSource = "dbStats.storage+index";
+      } else if (dataSize > 0) {
+        mongoUsedBytes = dataSize;
+        mongoFreeSource = "dbStats.dataSize";
+      }
+      if (fsTotal > 0) {
+        mongoQuotaBytes = fsTotal;
+        mongoFreeSource += "+fsTotalSize";
+      }
+    } catch (_) {}
+
+    const limitMb = Number(
+      process.env.MONGODB_STORAGE_LIMIT_MB || process.env.ATLAS_STORAGE_LIMIT_MB || 0
+    );
+    if (!mongoQuotaBytes && limitMb > 0) {
+      mongoQuotaBytes = Math.round(limitMb * 1024 * 1024);
+      mongoFreeSource += (mongoFreeSource ? "+" : "") + "MONGODB_STORAGE_LIMIT_MB";
+    }
+    // Atlas M0 por defecto si no hay otra fuente de cupo
+    if (!mongoQuotaBytes) {
+      mongoQuotaBytes = 512 * 1024 * 1024;
+      mongoFreeSource += (mongoFreeSource ? "+" : "") + "default_Atlas_M0_512MB";
+    }
+
+    const mongoFreeBytes = Math.max(0, mongoQuotaBytes - mongoUsedBytes);
+    const mongoUsedPct =
+      mongoQuotaBytes > 0
+        ? Math.round((mongoUsedBytes / mongoQuotaBytes) * 1000) / 10
+        : null;
 
     res.json({
       ok: true,
@@ -1093,6 +1167,14 @@ app.get("/api/storage/espacio", auth, async (_req, res) => {
         totalDocs: mongoTotalDocs,
         totalStorageBytes: mongoTotalBytes,
         totalStorageHuman: formatBytes(mongoTotalBytes),
+        usedBytes: mongoUsedBytes,
+        usedHuman: formatBytes(mongoUsedBytes),
+        quotaBytes: mongoQuotaBytes,
+        quotaHuman: formatBytes(mongoQuotaBytes),
+        freeBytes: mongoFreeBytes,
+        freeHuman: formatBytes(mongoFreeBytes),
+        usedPct: mongoUsedPct,
+        source: mongoFreeSource,
       },
       borrables: DATE_TABLES.map((t) => ({
         id: t.id,
