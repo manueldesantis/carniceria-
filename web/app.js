@@ -445,8 +445,171 @@
     });
     $("tab-consulta").classList.toggle("hidden", name !== "consulta");
     $("tab-reportes").classList.toggle("hidden", name !== "reportes");
+    const tabMant = $("tab-mantenimiento");
+    if (tabMant) tabMant.classList.toggle("hidden", name !== "mantenimiento");
     if (name === "reportes") {
       focusDateFirstDigit($("rep-desde"));
+    }
+    if (name === "mantenimiento") {
+      const d = $("del-desde");
+      const h = $("del-hasta");
+      if (d && !d.value && state.rangoFacturas.primera) {
+        setDateText(d, state.rangoFacturas.primera);
+      }
+      if (h && !h.value && state.rangoFacturas.ultima) {
+        setDateText(h, state.rangoFacturas.ultima);
+      }
+      focusDateFirstDigit(d || $("btn-espacio"));
+    }
+  }
+
+  function selectedDeleteTables() {
+    const tables = [];
+    if ($("del-facturas") && $("del-facturas").checked) tables.push("sync_facturas");
+    if ($("del-anaventa") && $("del-anaventa").checked) tables.push("sync_anaventa");
+    return tables;
+  }
+
+  async function loadEspacio() {
+    const err = $("espacio-error");
+    const resumen = $("espacio-resumen");
+    const body = $("espacio-body");
+    if (err) err.classList.add("hidden");
+    try {
+      const data = await api("/api/storage/espacio");
+      const byId = {};
+      (data.mongodb && data.mongodb.tables ? data.mongodb.tables : []).forEach(
+        (t) => {
+          byId[t.id] = t;
+        }
+      );
+      const rows = (data.dbf && data.dbf.tables ? data.dbf.tables : []).map((d) => {
+        const m = byId[d.id] || {};
+        return (
+          "<tr><td>" +
+          escapeHtml(d.label) +
+          "</td><td>" +
+          escapeHtml(d.dbf || "—") +
+          '</td><td class="num">' +
+          escapeHtml(d.exists ? d.sizeHuman : "—") +
+          '</td><td class="num">' +
+          escapeHtml(m.exists ? String(m.count) : "—") +
+          '</td><td class="num">' +
+          escapeHtml(m.exists ? m.storageHuman : "—") +
+          "</td></tr>"
+        );
+      });
+      body.innerHTML =
+        rows.join("") || '<tr><td colspan="5">Sin tablas</td></tr>';
+
+      const parts = [];
+      if (data.disk) {
+        parts.push(
+          "Disco libre: <strong>" +
+            escapeHtml(data.disk.freeHuman) +
+            "</strong> de " +
+            escapeHtml(data.disk.totalHuman) +
+            (data.disk.usedPct != null ? " (usado " + data.disk.usedPct + "%)" : "")
+        );
+      }
+      if (data.dbf) {
+        parts.push(
+          "DBF total: <strong>" + escapeHtml(data.dbf.totalHuman) + "</strong>"
+        );
+        if (data.dbf.nota) parts.push(escapeHtml(data.dbf.nota));
+      }
+      if (data.mongodb) {
+        parts.push(
+          "MongoDB: <strong>" +
+            escapeHtml(String(data.mongodb.totalDocs)) +
+            "</strong> regs / " +
+            escapeHtml(data.mongodb.totalStorageHuman)
+        );
+      }
+      if (resumen) resumen.innerHTML = parts.join(" · ");
+    } catch (e) {
+      if (err) {
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+      }
+    }
+  }
+
+  async function previewBorrar() {
+    const err = $("del-error");
+    const ok = $("del-ok");
+    const preview = $("del-preview");
+    if (err) err.classList.add("hidden");
+    if (ok) ok.textContent = "";
+    try {
+      const tables = selectedDeleteTables();
+      if (!tables.length) throw new Error("Seleccione al menos FACTURAS o ANAVENTA");
+      const data = await api("/api/admin/preview-borrar", {
+        method: "POST",
+        body: JSON.stringify({
+          desde: $("del-desde").value,
+          hasta: $("del-hasta").value,
+          tables,
+        }),
+      });
+      const detail = (data.detalle || [])
+        .map((d) => d.label + ": " + d.count)
+        .join(" · ");
+      if (preview) {
+        preview.innerHTML =
+          "Se borrarían <strong>" +
+          escapeHtml(String(data.total)) +
+          "</strong> registros (" +
+          escapeHtml(data.desdeBritish) +
+          " → " +
+          escapeHtml(data.hastaBritish) +
+          "). " +
+          escapeHtml(detail);
+      }
+    } catch (e) {
+      if (preview) preview.textContent = "";
+      if (err) {
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+      }
+    }
+  }
+
+  async function borrarRango() {
+    const err = $("del-error");
+    const ok = $("del-ok");
+    if (err) err.classList.add("hidden");
+    if (ok) ok.textContent = "";
+    try {
+      const tables = selectedDeleteTables();
+      if (!tables.length) throw new Error("Seleccione al menos FACTURAS o ANAVENTA");
+      const data = await api("/api/admin/borrar-rango", {
+        method: "POST",
+        body: JSON.stringify({
+          desde: $("del-desde").value,
+          hasta: $("del-hasta").value,
+          tables,
+          password: $("del-password").value,
+          confirm: $("del-confirm").value,
+        }),
+      });
+      $("del-password").value = "";
+      $("del-confirm").value = "";
+      if (ok) {
+        ok.textContent =
+          data.mensaje +
+          " (" +
+          (data.detalle || []).map((d) => d.label + ": " + d.deleted).join(", ") +
+          ")";
+      }
+      await previewBorrar();
+      await loadEspacio();
+      await loadRangoFacturas();
+    } catch (e) {
+      if (err) {
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+      }
     }
   }
 
@@ -943,6 +1106,9 @@
   $("btn-ventas").onclick = loadVentas;
   $("btn-cantidades").onclick = loadCantidades;
   $("btn-export-csv").onclick = exportInformeCsv;
+  if ($("btn-espacio")) $("btn-espacio").onclick = loadEspacio;
+  if ($("btn-preview-borrar")) $("btn-preview-borrar").onclick = previewBorrar;
+  if ($("btn-borrar-rango")) $("btn-borrar-rango").onclick = borrarRango;
 
   document.querySelectorAll(".btn-calendar").forEach((btn) => {
     btn.addEventListener("click", (e) => {
@@ -955,7 +1121,7 @@
   });
 
   // Mantener Desde/Hasta dentro de [primer comprobante, último comprobante] de FACTURAS
-  ["rep-desde", "rep-hasta"].forEach((id) => {
+  ["rep-desde", "rep-hasta", "del-desde", "del-hasta"].forEach((id) => {
     const el = $(id);
     if (!el) return;
     el.addEventListener("focus", () => {
@@ -977,11 +1143,21 @@
       e.preventDefault();
       if (id === "rep-desde") {
         focusDateFirstDigit($("rep-hasta"));
-      } else {
+      } else if (id === "rep-hasta") {
         $("btn-ventas")?.focus();
+      } else if (id === "del-desde") {
+        focusDateFirstDigit($("del-hasta"));
+      } else if (id === "del-hasta") {
+        $("btn-preview-borrar")?.focus();
       }
     });
     el.addEventListener("change", () => {
+      if (id === "del-desde" || id === "del-hasta") {
+        let iso = toIso(el.value);
+        if (!iso) return;
+        setDateText(el, iso);
+        return;
+      }
       const primera = state.rangoFacturas.primera;
       const ultima = state.rangoFacturas.ultima;
       let iso = toIso(el.value);

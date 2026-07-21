@@ -85,6 +85,25 @@ a { color: var(--accent2); }
   border: 1px solid var(--line);
 }
 .btn.secondary { background: var(--accent2); color: #06241f; }
+.btn.danger {
+  background: #b33a3a;
+  color: #fff;
+}
+.btn.danger:hover {
+  filter: brightness(1.08);
+}
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.chk input {
+  width: 1.05rem;
+  height: 1.05rem;
+}
 .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 
 .panel {

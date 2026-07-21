@@ -14,7 +14,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=19" />
+  <link rel="stylesheet" href="/styles.css?v=20" />
 </head>
 <body>
   <div id="view-login" class="login-wrap app-shell">
@@ -54,6 +54,7 @@
     <nav class="tabs" id="main-tabs">
       <button type="button" class="tab active" data-tab="consulta">Consulta</button>
       <button type="button" class="tab" data-tab="reportes">Reportes (ventas + kilos)</button>
+      <button type="button" class="tab" data-tab="mantenimiento">Espacio / Borrado</button>
     </nav>
 
     <div id="tab-consulta">
@@ -180,6 +181,86 @@
         </div>
       </section>
     </div>
+    <div id="tab-mantenimiento" class="hidden">
+      <section class="panel">
+        <h2 style="margin:0 0 8px;font-size:1.25rem">Espacio de tablas sincronizadas</h2>
+        <p class="hint">
+          Tamaño de los DBF en disco (si esta PC tiene <code>C:\JULIOABE</code>) y espacio usado en MongoDB.
+        </p>
+        <div class="toolbar" style="margin-bottom:10px">
+          <button id="btn-espacio" class="btn secondary" type="button">Consultar espacio</button>
+        </div>
+        <div id="espacio-error" class="err hidden"></div>
+        <p id="espacio-resumen" class="hint" style="margin-top:0"></p>
+        <div class="table-wrap">
+          <table class="data planilla">
+            <thead>
+              <tr>
+                <th>Tabla</th>
+                <th>DBF</th>
+                <th class="num">Tamaño DBF</th>
+                <th class="num">Regs. MongoDB</th>
+                <th class="num">Espacio MongoDB</th>
+              </tr>
+            </thead>
+            <tbody id="espacio-body">
+              <tr><td colspan="5">Pulse «Consultar espacio»</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:14px">
+        <h2 style="margin:0 0 8px;font-size:1.25rem">Borrar registros en MongoDB por fechas</h2>
+        <p class="hint">
+          Elimina de la nube (MongoDB) los registros de <strong>FACTURAS</strong> y/o <strong>ANAVENTA</strong>
+          dentro del rango. No modifica los DBF locales. Acción irreversible.
+        </p>
+        <div class="toolbar dates">
+          <label>
+            Desde
+            <div class="date-field">
+              <input id="del-desde" class="date-text" type="text" inputmode="numeric" placeholder="DD/MM/AAAA" maxlength="10" autocomplete="off" spellcheck="false" />
+              <button type="button" class="btn-calendar" data-date-for="del-desde" title="Abrir almanaque" aria-label="Almanaque desde borrado">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path fill="currentColor" d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1.5A2.5 2.5 0 0 1 22 6.5v13A2.5 2.5 0 0 1 19.5 22h-15A2.5 2.5 0 0 1 2 19.5v-13A2.5 2.5 0 0 1 4.5 4H6V3a1 1 0 0 1 1-1zm12.5 8h-15v9.5c0 .28.22.5.5.5h15a.5.5 0 0 0 .5-.5V10zM4.5 6a.5.5 0 0 0-.5.5V8h16V6.5a.5.5 0 0 0-.5-.5h-15z"/>
+                </svg>
+              </button>
+            </div>
+          </label>
+          <label>
+            Hasta
+            <div class="date-field">
+              <input id="del-hasta" class="date-text" type="text" inputmode="numeric" placeholder="DD/MM/AAAA" maxlength="10" autocomplete="off" spellcheck="false" />
+              <button type="button" class="btn-calendar" data-date-for="del-hasta" title="Abrir almanaque" aria-label="Almanaque hasta borrado">
+                <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                  <path fill="currentColor" d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1.5A2.5 2.5 0 0 1 22 6.5v13A2.5 2.5 0 0 1 19.5 22h-15A2.5 2.5 0 0 1 2 19.5v-13A2.5 2.5 0 0 1 4.5 4H6V3a1 1 0 0 1 1-1zm12.5 8h-15v9.5c0 .28.22.5.5.5h15a.5.5 0 0 0 .5-.5V10zM4.5 6a.5.5 0 0 0-.5.5V8h16V6.5a.5.5 0 0 0-.5-.5h-15z"/>
+                </svg>
+              </button>
+            </div>
+          </label>
+        </div>
+        <div class="del-tables" style="display:flex;gap:14px;flex-wrap:wrap;margin:10px 0">
+          <label class="chk"><input type="checkbox" id="del-facturas" checked /> FACTURAS</label>
+          <label class="chk"><input type="checkbox" id="del-anaventa" checked /> ANAVENTA</label>
+        </div>
+        <div class="toolbar" style="margin-bottom:8px">
+          <button id="btn-preview-borrar" class="btn secondary" type="button">Ver cuántos se borrarían</button>
+        </div>
+        <p id="del-preview" class="hint"></p>
+        <div class="field" style="max-width:320px">
+          <label for="del-password">Clave de acceso (confirmación)</label>
+          <input id="del-password" type="password" autocomplete="off" placeholder="Clave del sistema" />
+        </div>
+        <div class="field" style="max-width:320px">
+          <label for="del-confirm">Escriba BORRAR para confirmar</label>
+          <input id="del-confirm" type="text" autocomplete="off" placeholder="BORRAR" />
+        </div>
+        <button id="btn-borrar-rango" class="btn danger" type="button">Borrar registros en MongoDB</button>
+        <div id="del-error" class="err hidden" style="margin-top:10px"></div>
+        <p id="del-ok" class="hint" style="margin-top:10px"></p>
+      </section>
+    </div>
   </div>
 
   <div id="backdrop" class="drawer-backdrop"></div>
@@ -191,6 +272,6 @@
     <pre id="doc-json">{}</pre>
   </aside>
 
-  <script src="/app.js?v=19"></script>
+  <script src="/app.js?v=20"></script>
 </body>
 </html>

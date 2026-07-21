@@ -943,6 +943,317 @@ app.get("/api/reports/periodo", auth, async (req, res) => {
   }
 });
 
+/** Tablas con campo fecha usable para borrado por rango */
+const DATE_TABLES = [
+  { id: "sync_facturas", label: "FACTURAS", dbf: "FACTURAS.DBF", dateField: "F_FEC" },
+  { id: "sync_anaventa", label: "ANAVENTA", dbf: "ANAVENTA.DBF", dateField: "FECHA" },
+];
+
+function resolvePathDbf() {
+  const fromEnv = String(
+    process.env.PATHDBF || process.env.JULIOABE_PATH || ""
+  ).trim();
+  if (fromEnv) return fromEnv;
+  if (process.platform === "win32" && fs.existsSync("C:\\JULIOABE")) {
+    return "C:\\JULIOABE";
+  }
+  return path.join(__dirname, "..", "..");
+}
+
+function formatBytes(n) {
+  const v = Number(n) || 0;
+  if (v < 1024) return v + " B";
+  if (v < 1024 * 1024) return (v / 1024).toFixed(1) + " KB";
+  if (v < 1024 * 1024 * 1024) return (v / (1024 * 1024)).toFixed(2) + " MB";
+  return (v / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+}
+
+function getDiskFree(dirPath) {
+  try {
+    if (typeof fs.statfsSync === "function") {
+      const st = fs.statfsSync(dirPath);
+      const bsize = Number(st.bsize || st.frsize || 0);
+      const bavail = Number(st.bavail != null ? st.bavail : st.bfree || 0);
+      const blocks = Number(st.blocks || 0);
+      return {
+        freeBytes: bsize * bavail,
+        totalBytes: bsize * blocks,
+      };
+    }
+  } catch (_) {}
+  return null;
+}
+
+function dateRangeMongoFilter(field, desde, hasta) {
+  const desdeDt = new Date(desde + "T00:00:00.000Z");
+  const hastaDt = new Date(hasta + "T23:59:59.999Z");
+  return {
+    $or: [
+      { [field]: { $gte: desde, $lte: hasta } },
+      { [field]: { $gte: desdeDt, $lte: hastaDt } },
+    ],
+  };
+}
+
+/** Espacio DBF locales + tamaño de colecciones MongoDB */
+app.get("/api/storage/espacio", auth, async (_req, res) => {
+  try {
+    const database = await ensureDb();
+    const pathDbf = resolvePathDbf();
+    const pathExists = fs.existsSync(pathDbf);
+    const disk = pathExists ? getDiskFree(pathDbf) : null;
+
+    const dbfTables = [];
+    let dbfTotalBytes = 0;
+    for (const t of TABLES) {
+      if (!t.dbf) continue;
+      const full = path.join(pathDbf, t.dbf);
+      let sizeBytes = 0;
+      let exists = false;
+      if (pathExists && fs.existsSync(full)) {
+        exists = true;
+        sizeBytes = fs.statSync(full).size;
+        dbfTotalBytes += sizeBytes;
+      }
+      dbfTables.push({
+        id: t.id,
+        label: t.label,
+        dbf: t.dbf,
+        path: full,
+        exists,
+        sizeBytes,
+        sizeHuman: formatBytes(sizeBytes),
+      });
+    }
+
+    const mongoTables = [];
+    let mongoTotalBytes = 0;
+    let mongoTotalDocs = 0;
+    for (const t of TABLES) {
+      let count = 0;
+      let storageSize = 0;
+      let size = 0;
+      let exists = false;
+      try {
+        const cols = await database.listCollections({ name: t.id }).toArray();
+        exists = cols.length > 0;
+        if (exists) {
+          const st = await database.command({ collStats: t.id });
+          count = Number(st.count || 0);
+          storageSize = Number(st.storageSize || 0);
+          size = Number(st.size || 0);
+          mongoTotalBytes += storageSize;
+          mongoTotalDocs += count;
+        }
+      } catch (_) {
+        exists = false;
+      }
+      mongoTables.push({
+        id: t.id,
+        label: t.label,
+        exists,
+        count,
+        storageBytes: storageSize,
+        dataBytes: size,
+        storageHuman: formatBytes(storageSize),
+        dataHuman: formatBytes(size),
+      });
+    }
+
+    res.json({
+      ok: true,
+      pathDbf,
+      pathExists,
+      disk: disk
+        ? {
+            freeBytes: disk.freeBytes,
+            totalBytes: disk.totalBytes,
+            freeHuman: formatBytes(disk.freeBytes),
+            totalHuman: formatBytes(disk.totalBytes),
+            usedPct:
+              disk.totalBytes > 0
+                ? Math.round(
+                    ((disk.totalBytes - disk.freeBytes) / disk.totalBytes) * 1000
+                  ) / 10
+                : null,
+          }
+        : null,
+      dbf: {
+        tables: dbfTables,
+        totalBytes: dbfTotalBytes,
+        totalHuman: formatBytes(dbfTotalBytes),
+        disponibleHuman: disk ? formatBytes(disk.freeBytes) : null,
+        nota: pathExists
+          ? "Tamanos de archivos DBF en disco local"
+          : "Esta instancia no tiene acceso a C:\\JULIOABE (p.ej. Render). Solo se muestra MongoDB.",
+      },
+      mongodb: {
+        database: MONGODB_DB,
+        tables: mongoTables,
+        totalDocs: mongoTotalDocs,
+        totalStorageBytes: mongoTotalBytes,
+        totalStorageHuman: formatBytes(mongoTotalBytes),
+      },
+      borrables: DATE_TABLES.map((t) => ({
+        id: t.id,
+        label: t.label,
+        dateField: t.dateField,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, mensaje: String(err.message || err) });
+  }
+});
+
+async function countDeleteByRange(database, desde, hasta, tableIds) {
+  const wanted = new Set(
+    (tableIds && tableIds.length ? tableIds : DATE_TABLES.map((t) => t.id)).map(
+      String
+    )
+  );
+  const detalle = [];
+  let total = 0;
+  for (const t of DATE_TABLES) {
+    if (!wanted.has(t.id)) continue;
+    const filter = dateRangeMongoFilter(t.dateField, desde, hasta);
+    let count = 0;
+    try {
+      count = await database.collection(t.id).countDocuments(filter);
+    } catch (_) {
+      count = 0;
+    }
+    total += count;
+    detalle.push({
+      id: t.id,
+      label: t.label,
+      dateField: t.dateField,
+      count,
+      filterCampos: t.dateField,
+    });
+  }
+  return { total, detalle, desde, hasta };
+}
+
+/** Vista previa: cuantos registros se borrarian */
+app.post("/api/admin/preview-borrar", auth, async (req, res) => {
+  try {
+    const database = await ensureDb();
+    const desde = toIsoDate(req.body && req.body.desde);
+    const hasta = toIsoDate(req.body && req.body.hasta);
+    if (!desde || !hasta) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: "Indique fechas Desde y Hasta (DD/MM/AAAA)",
+      });
+    }
+    if (desde > hasta) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: "La fecha Desde no puede ser mayor que Hasta",
+      });
+    }
+    const tables = Array.isArray(req.body && req.body.tables)
+      ? req.body.tables
+      : null;
+    const data = await countDeleteByRange(database, desde, hasta, tables);
+    res.json({
+      ok: true,
+      ...data,
+      desdeBritish: toBritishDate(desde),
+      hastaBritish: toBritishDate(hasta),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, mensaje: String(err.message || err) });
+  }
+});
+
+/**
+ * Borra registros de MongoDB en un rango de fechas.
+ * Requiere confirmar con la misma clave de acceso (password).
+ */
+app.post("/api/admin/borrar-rango", auth, async (req, res) => {
+  try {
+    const pass = String((req.body && req.body.password) || "").trim();
+    if (!pass || pass.toLowerCase() !== APP_PASSWORD.toLowerCase()) {
+      return res.status(401).json({
+        ok: false,
+        mensaje: "Clave incorrecta. No se borro nada.",
+      });
+    }
+    const confirm = String((req.body && req.body.confirm) || "")
+      .trim()
+      .toUpperCase();
+    if (confirm !== "BORRAR") {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Para confirmar escriba BORRAR en el campo de confirmacion.',
+      });
+    }
+
+    const database = await ensureDb();
+    const desde = toIsoDate(req.body && req.body.desde);
+    const hasta = toIsoDate(req.body && req.body.hasta);
+    if (!desde || !hasta) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: "Indique fechas Desde y Hasta (DD/MM/AAAA)",
+      });
+    }
+    if (desde > hasta) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: "La fecha Desde no puede ser mayor que Hasta",
+      });
+    }
+
+    const tables = Array.isArray(req.body && req.body.tables)
+      ? req.body.tables
+      : null;
+    const wanted = new Set(
+      (tables && tables.length ? tables : DATE_TABLES.map((t) => t.id)).map(
+        String
+      )
+    );
+
+    const detalle = [];
+    let total = 0;
+    for (const t of DATE_TABLES) {
+      if (!wanted.has(t.id)) continue;
+      const filter = dateRangeMongoFilter(t.dateField, desde, hasta);
+      const result = await database.collection(t.id).deleteMany(filter);
+      const deleted = Number(result.deletedCount || 0);
+      total += deleted;
+      detalle.push({
+        id: t.id,
+        label: t.label,
+        dateField: t.dateField,
+        deleted,
+      });
+    }
+
+    console.log(
+      `[admin] borrar-rango ${desde}..${hasta} total=${total}`,
+      detalle
+    );
+
+    res.json({
+      ok: true,
+      mensaje:
+        total > 0
+          ? "Se eliminaron " + total + " registros de MongoDB."
+          : "No habia registros en ese rango.",
+      total,
+      detalle,
+      desde,
+      hasta,
+      desdeBritish: toBritishDate(desde),
+      hastaBritish: toBritishDate(hasta),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, mensaje: String(err.message || err) });
+  }
+});
+
 // UI estatica
 const webRoot = path.join(__dirname, "..", "web");
 app.use(express.static(webRoot));
